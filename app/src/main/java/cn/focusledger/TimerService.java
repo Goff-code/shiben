@@ -39,7 +39,7 @@ public final class TimerService extends Service {
         Notification.Builder b=new Notification.Builder(this,LIVE).setSmallIcon(R.drawable.ic_notification)
             .setContentTitle(paused?"已暂停 · "+title:title).setContentText("剩余 "+format(remaining)+" · 点击返回账本")
             .setContentIntent(open(this)).setOngoing(true).setOnlyAlertOnce(true).setColor(Color.rgb(35,105,90))
-            .setCategory(Notification.CATEGORY_STOPWATCH).setVisibility(Notification.VISIBILITY_PRIVATE)
+            .setCategory(Build.VERSION.SDK_INT>=31?Notification.CATEGORY_STOPWATCH:Notification.CATEGORY_PROGRESS).setVisibility(Notification.VISIBILITY_PRIVATE)
             .addAction(new Notification.Action.Builder(null,paused?"继续":"暂停",control).build());
         if(!paused)b.setWhen(System.currentTimeMillis()+remaining).setUsesChronometer(true).setChronometerCountDown(true);
         return b.build();

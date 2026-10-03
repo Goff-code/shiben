@@ -15,12 +15,14 @@ import cn.focusledger.core.TimerEngine;
 
 /** Single-process authority. Every state transition and terminal record is persisted atomically. */
 public final class TimerCoordinator {
+    @android.annotation.SuppressLint("StaticFieldLeak") // Application context only, never an Activity.
     private static TimerCoordinator instance;
     private final Context context;
     private final LedgerStore store;
     private TimerEngine engine;
     private long lastCheckpointElapsed;
     private String warning = "";
+    private final String fallbackBootId="unknown-"+java.util.UUID.randomUUID();
     public static synchronized TimerCoordinator get(Context context) {
         if (instance == null) instance = new TimerCoordinator(context.getApplicationContext());
         return instance;
@@ -36,7 +38,7 @@ public final class TimerCoordinator {
     public synchronized String warning() { return warning; }
     private String bootId() {
         try { return "boot-" + Settings.Global.getInt(context.getContentResolver(), Settings.Global.BOOT_COUNT); }
-        catch (Exception ignored) { return "boot-epoch-" + ((System.currentTimeMillis()-SystemClock.elapsedRealtime()) / 60000); }
+        catch (Exception ignored) { return fallbackBootId; }
     }
     private void persist(Session session) {
         store.persistTimer(engine.snapshot(), session);
@@ -56,25 +58,25 @@ public final class TimerCoordinator {
         Session expired = refresh();
         if (!engine.isActive() || expired != null) return;
         TimerEngine.State before = engine.snapshot();
-        try { Session s = engine.pause(System.currentTimeMillis(),SystemClock.elapsedRealtime(),bootId()); persist(s); }
+        try { Session s = engine.pause(System.currentTimeMillis(),SystemClock.elapsedRealtime(),bootId()); persist(s); if(s != null) completeSideEffects(s); }
         catch (RuntimeException failure) { engine = new TimerEngine(before); throw failure; }
         cancelAlarm();
-        startService();
+        if(engine.isActive()) startService();
     }
     public synchronized void resume() {
         refresh();
         if (!engine.isActive()) return;
         TimerEngine.State before = engine.snapshot();
-        try { Session s = engine.resume(System.currentTimeMillis(),SystemClock.elapsedRealtime(),bootId()); persist(s); }
+        try { Session s = engine.resume(System.currentTimeMillis(),SystemClock.elapsedRealtime(),bootId()); persist(s); if(s != null) completeSideEffects(s); }
         catch (RuntimeException failure) { engine = new TimerEngine(before); throw failure; }
         schedule();
-        startService();
+        if(engine.isActive()) startService();
     }
     public synchronized void finish() {
         Session expired = refresh();
         if (!engine.isActive() || expired != null) return;
         TimerEngine.State before = engine.snapshot();
-        try { Session s = engine.finish(System.currentTimeMillis(),SystemClock.elapsedRealtime(),bootId(), "early_end"); persist(s); }
+        try { Session s = engine.finish(System.currentTimeMillis(),SystemClock.elapsedRealtime(),bootId(), "early_end"); persist(s); if(s != null && !"early_end".equals(s.reason)) completeSideEffects(s); }
         catch (RuntimeException failure) { engine = new TimerEngine(before); throw failure; }
         cancelAlarm();
         context.stopService(new Intent(context,TimerService.class));
@@ -86,11 +88,7 @@ public final class TimerCoordinator {
             completed = engine.reconcile(System.currentTimeMillis(), SystemClock.elapsedRealtime(), bootId());
             if (completed != null) persist(completed);
         } catch (RuntimeException failure) { engine = new TimerEngine(before); throw failure; }
-        if (completed != null) {
-            cancelAlarm();
-            TimerService.notifyFinished(context,completed);
-            context.stopService(new Intent(context,TimerService.class));
-        }
+        if (completed != null) completeSideEffects(completed);
         return completed;
     }
     public synchronized void checkpoint() {
@@ -98,8 +96,13 @@ public final class TimerCoordinator {
         long now = SystemClock.elapsedRealtime();
         if (now-lastCheckpointElapsed < 10000) return;
         TimerEngine.State before=engine.snapshot();
-        try { Session s=engine.checkpoint(System.currentTimeMillis(),now,bootId()); persist(s); }
+        try { Session s=engine.checkpoint(System.currentTimeMillis(),now,bootId()); persist(s); if(s != null) completeSideEffects(s); }
         catch (RuntimeException failure) { engine=new TimerEngine(before); throw failure; }
+    }
+    private void completeSideEffects(Session session) {
+        cancelAlarm();
+        TimerService.notifyFinished(context,session);
+        context.stopService(new Intent(context,TimerService.class));
     }
     public synchronized long actualMs() {
         return engine.isActive() ? engine.currentActualMs(System.currentTimeMillis(),SystemClock.elapsedRealtime(),bootId()) : 0;
