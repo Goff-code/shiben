@@ -19,7 +19,7 @@ import java.util.*;
 public final class LedgerInstrumentation extends Instrumentation {
     private int passed;
     private final StringBuilder log=new StringBuilder();
-    private void check(boolean ok,String name){if(!ok)throw new AssertionError(name);passed++;log.append("PASS ").append(name).append('\n');}
+    private void check(boolean ok,String name){if(!ok)throw new AssertionError(name);passed++;log.append("PASS ").append(name).append('\n');Bundle status=new Bundle();status.putString("stream","PASS "+name+"\n");sendStatus(0,status);}
     @Override public void onCreate(Bundle args){super.onCreate(args);start();}
     @Override public void onStart(){
         Bundle result=new Bundle(); Activity activity=null;
@@ -80,7 +80,7 @@ public final class LedgerInstrumentation extends Instrumentation {
             state.checkpointWallMs=wall;state.checkpointElapsedMs=elapsed;
             Field engine=TimerCoordinator.class.getDeclaredField("engine");engine.setAccessible(true);engine.set(timer,new TimerEngine(state));
             store.persistTimer(state,null);timer.schedule();
-            sendKeyDownUpSync(android.view.KeyEvent.KEYCODE_HOME);
+            runOnMainSync(()->check(screen.moveTaskToBack(true),"own app moved to background without injection permission"));
             SystemClock.sleep(6500);
             check(!timer.engine().isActive(),"background expiry ends timer without UI refresh");
             boolean completionNotification=false;
