@@ -9,3 +9,6 @@ signing.properties
 .DS_Store
 tools/
 artifacts/
+
+# Locally signed outputs
+focus-ledger-release.apk*
