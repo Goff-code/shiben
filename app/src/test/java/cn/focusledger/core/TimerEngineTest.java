@@ -7,6 +7,7 @@ import java.io.ByteArrayOutputStream;
 import java.io.ObjectInputStream;
 import java.io.ObjectOutputStream;
 import java.util.TimeZone;
+import java.util.Random;
 
 import static org.junit.Assert.*;
 
@@ -420,6 +421,70 @@ public class TimerEngineTest {
             assertEquals("America/New_York", engine.snapshot().zoneId);
         } finally {
             TimeZone.setDefault(originalZone);
+        }
+    }
+
+    @Test public void randomizedTransitionsConserveMonotonicTimeAndNeverDoubleComplete() {
+        Random random = new Random(8675309L);
+        for (int trial = 0; trial < 200; trial++) {
+            TimerEngine engine = start(15);
+            String id = engine.snapshot().sessionId;
+            long wall = W;
+            long elapsed = E;
+            long expectedActual = 0L;
+            boolean running = true;
+            Session completed = null;
+            for (int step = 0; step < 200 && completed == null; step++) {
+                long delta = random.nextInt(180_001);
+                elapsed += delta;
+                wall += delta;
+                if (random.nextInt(6) == 0) {
+                    wall += (random.nextInt(49) - 24) * 60L * M;
+                }
+                if (running) expectedActual = Math.min(15 * M, expectedActual + delta);
+                assertEquals(expectedActual, engine.currentActualMs(wall, elapsed, BOOT));
+                completed = engine.reconcile(wall, elapsed, BOOT);
+                if (completed != null) break;
+                switch (random.nextInt(5)) {
+                    case 0:
+                        assertNull(engine.checkpoint(wall, elapsed, BOOT));
+                        break;
+                    case 1:
+                        assertNull(engine.pause(wall, elapsed, BOOT));
+                        running = false;
+                        break;
+                    case 2:
+                        assertNull(engine.resume(wall, elapsed, BOOT));
+                        running = true;
+                        break;
+                    case 3:
+                        engine = new TimerEngine(engine.snapshot());
+                        break;
+                    default:
+                        assertNull(engine.reconcile(wall, elapsed, BOOT));
+                        break;
+                }
+                assertEquals(!running, engine.isPaused());
+                assertEquals(id, engine.snapshot().sessionId);
+            }
+            if (completed == null) {
+                engine.resume(wall, elapsed, BOOT);
+                long remaining = 15 * M - expectedActual;
+                completed = engine.reconcile(wall + remaining + 1234L,
+                        elapsed + remaining + 1234L, BOOT);
+            }
+            assertNotNull(completed);
+            assertEquals(id, completed.id);
+            assertEquals(15 * M, completed.actualMs);
+            assertEquals(TimerEngine.REASON_EXPIRED, completed.reason);
+            long intervalSum = 0L;
+            for (Segment segment : completed.segments) intervalSum += segment.actualMs;
+            assertEquals(completed.actualMs, intervalSum);
+            long daySum = 0L;
+            for (long duration : DailyTotals.totalsByDay(completed).values()) daySum += duration;
+            assertEquals(completed.actualMs, daySum);
+            assertNull(engine.reconcile(wall, elapsed, BOOT));
+            assertNull(engine.finish(wall, elapsed, BOOT, TimerEngine.REASON_EARLY_END));
         }
     }
 }
