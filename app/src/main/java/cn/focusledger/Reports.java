@@ -104,13 +104,17 @@ public final class Reports {
             int done = 0;
             for (String taskId : scheduled.keySet()) if (store.taskDone(taskId, date)) done++;
             out.append("自报完成 ").append(done).append(" / ").append(scheduled.size())
-                    .append("；完成勾选与计时记录独立。\n\n");
+                    .append("（按当前任务计划，保留当日勾选）。\n")
+                    .append("完成勾选与计时记录独立；此清单不是当时任务计划的完整快照。\n\n");
             if (scheduled.isEmpty()) out.append("当天没有安排任务。\n\n");
             else {
                 for (LedgerStore.Task task : scheduled.values()) {
-                    LedgerStore.Project project = store.getProject(task.projectId);
+                    LedgerStore.TaskCheck check = checks.get(task.id);
+                    String title = check == null ? task.title : check.taskTitle;
+                    String projectId = check == null ? task.projectId : check.projectId;
+                    LedgerStore.Project project = store.getProject(projectId);
                     out.append("- [").append(store.taskDone(task.id, date) ? 'x' : ' ').append("] ")
-                            .append(markdown(task.title)).append("（")
+                            .append(markdown(title)).append("（")
                             .append(markdown(project == null ? "未分类" : project.name)).append('）');
                     if (task.archived) out.append(" · 历史任务");
                     out.append('\n');
@@ -143,6 +147,7 @@ public final class Reports {
                     .append("- 本日报告包含的记录时区：")
                     .append(zones.isEmpty() ? "无记录" : markdown(String.join("、", zones))).append("。\n")
                     .append("- 计时结束不代表任务已经完成；任务完成由本人勾选。手动补记和更正保留标记。\n")
+                    .append("- 任务清单保留当日勾选时的任务名称与分类归属；清单分类名称采用当前分类信息。\n")
                     .append("- 分类占比以本日实际专注总时长为分母；零总时长显示 0.0%。\n");
             return out.toString();
         }
