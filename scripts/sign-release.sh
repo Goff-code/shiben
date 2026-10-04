@@ -10,11 +10,11 @@ INPUT="${1:-app/build/outputs/apk/release/app-release-unsigned.apk}"
 OUTPUT="${2:-shiben-release.apk}"
 [[ -r "$INPUT" ]] || { echo 'Unsigned APK is missing' >&2; exit 1; }
 [[ -r "$KEYSTORE" ]] || { echo 'Local release keystore is missing' >&2; exit 1; }
-ALIGNED="$(mktemp "${TMPDIR:-/tmp}/shiben-aligned.XXXXXX.apk")"
+ALIGNED="$(mktemp "${TMPDIR:-/tmp}/shiben-aligned.XXXXXX")"
 trap 'rm -f "$ALIGNED"' EXIT
 BT="$ANDROID_HOME/build-tools/35.0.0"
-"$BT/zipalign" -f -p 4 "$INPUT" "$ALIGNED"
-ARGS=(sign --ks "$KEYSTORE" --ks-key-alias "$KEY_ALIAS" --out "$OUTPUT")
+"$BT/zipalign" -f -P 16 4 "$INPUT" "$ALIGNED"
+ARGS=(sign --v4-signing-enabled false --ks "$KEYSTORE" --ks-key-alias "$KEY_ALIAS" --out "$OUTPUT")
 if [[ -n "${KEYSTORE_PASSWORD_FILE:-}" ]]; then
   [[ -r "$KEYSTORE_PASSWORD_FILE" ]] || { echo 'Protected password file is not readable' >&2; exit 1; }
   ARGS+=(--ks-pass "file:$KEYSTORE_PASSWORD_FILE")
@@ -22,5 +22,5 @@ fi
 # No --ks-pass means apksigner prompts securely in the local terminal.
 "$BT/apksigner" "${ARGS[@]}" "$ALIGNED"
 "$BT/apksigner" verify --verbose --print-certs "$OUTPUT"
-"$BT/zipalign" -c -p 4 "$OUTPUT"
+"$BT/zipalign" -c -P 16 4 "$OUTPUT"
 printf '\nSigned APK: %s\nDo not upload the keystore or password. Keep the same V2 key for every update.\n' "$OUTPUT"

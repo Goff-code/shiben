@@ -18,7 +18,7 @@
 
 ## 已有 V2 密钥时签名
 
-使用仓库 `scripts/sign-release.sh <unsigned-apk> <output-apk>`，本地环境指定 ANDROID_HOME、KEYSTORE、KEY_ALIAS。脚本不会创建密钥，默认由 apksigner 在本地交互询问密码；也可使用用户本地受保护密码文件。
+使用仓库 `scripts/sign-release.sh <unsigned-apk> <output-apk>`，本地环境指定 ANDROID_HOME、KEYSTORE、KEY_ALIAS。脚本兼容 macOS mktemp，使用16KiB原生库页对齐并禁用无需分发的v4 sidecar；不会创建密钥，默认由 apksigner 在本地交互询问密码；也可使用用户本地受保护密码文件。
 
 签名前核对交付的 unsigned APK SHA256；签名后执行 apksigner verify --verbose --print-certs、zipalign检查，并核对包名 cn.goff.shiben、versionCode3、versionName2.0.0、非debuggable、无网络权限。记录正式证书 SHA256，后续 V3 不得更换。
 
