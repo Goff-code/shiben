@@ -3,7 +3,9 @@ android {
     namespace 'cn.focusledger'
     compileSdk 35
     defaultConfig {
-        applicationId 'cn.focusledger'
+        // A separate app keeps any installed 1.0.0 app and its private data intact.
+        // The old release signing key is unavailable, so this is not an in-place update.
+        applicationId 'cn.goff.shiben'
         minSdk 26
         targetSdk 35
         versionCode 2

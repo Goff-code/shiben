@@ -25,6 +25,8 @@ public final class LedgerInstrumentation extends Instrumentation {
         Bundle result=new Bundle(); Activity activity=null;
         try {
             Context context=getTargetContext();
+            check("cn.goff.shiben".equals(context.getPackageName()),"independent Shiben application ID");
+            check("时本".contentEquals(context.getApplicationInfo().loadLabel(context.getPackageManager())),"installed application label");
             activity=startActivitySync(new Intent(context,MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
             waitForIdleSync(); final Activity screen=activity;
             TimerCoordinator timer=TimerCoordinator.get(context); LedgerStore store=timer.store();

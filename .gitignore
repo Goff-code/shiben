@@ -7,6 +7,8 @@ signing.properties
 *.hprof
 .idea/
 .DS_Store
+__pycache__/
+*.pyc
 tools/
 artifacts/
 

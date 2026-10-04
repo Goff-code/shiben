@@ -27,7 +27,8 @@ store = read("app/src/main/java/cn/focusledger/LedgerStore.java")
 service = read("app/src/main/java/cn/focusledger/TimerService.java")
 check(app.attrib[android + "label"] == "时本", "launcher/app label")
 check("namespace 'cn.focusledger'" in build, "Java namespace preserved")
-check("applicationId 'cn.focusledger'" in build, "application ID preserved")
+check("applicationId 'cn.goff.shiben'" in build, "independent Shiben application ID")
+check("applicationId 'cn.focusledger'" not in build, "does not replace the old installed app")
 check(re.search(r"versionCode\s+2\b", build), "versionCode incremented")
 check("versionName '1.0.1'" in build, "versionName incremented")
 check('label("时本", 16,' in activity, "in-app brand")
@@ -46,4 +47,4 @@ check(not any(p.attrib.get(android + "name") == "android.permission.INTERNET" fo
 for path in sorted((root / "app/src").rglob("*")):
     if path.is_file() and path.suffix in (".java", ".xml"):
         check("专注账本" not in path.read_text(encoding="utf-8"), "no stale brand: " + str(path.relative_to(root)))
-print(f"PASS ({checks} checks): brand/copy/export labels, release version, stable package/database/backup identity, privacy manifest")
+print(f"PASS ({checks} checks): brand/copy/export labels, release version, independent application ID, stable database/backup format, privacy manifest")

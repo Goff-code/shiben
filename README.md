@@ -35,18 +35,21 @@
 3. `./gradlew testDebugUnitTest lintDebug assembleDebug assembleRelease`
 4. Debug APK 可测试安装；Release 默认生成未签名 APK，使用自己的签名密钥签名后安装
 
-源码不包含 SDK、构建缓存、设备数据、签名私钥或密码。重新签名的 APK 无法直接覆盖不同签名的已安装版本；请先导出数据，勿为更新盲目卸载。旧版 1.0.0 APK 的签名密钥曾仅保留在制作环境；环境重置后目前无法找到，不能生成与旧版同签名的更新。源码备份不等于签名身份备份。当前交付的是时本 1.0.1 源码，尚未交付可安装的新版 APK，已交付的专注账本 1.0.0 APK 不会自动改名。详见安装说明。
+已构建签名正式包“时本-1.0.1.apk”，桌面名称为“时本”。新版 applicationId 为 `cn.goff.shiben`，可与旧版 `cn.focusledger` 独立安装；它不会覆盖或卸载旧版，也不会自动读取旧版数据。Java 源码 namespace 仍为 `cn.focusledger`，并不影响安装身份。
+
+源码不包含 SDK、构建缓存、设备数据、签名私钥或密码。旧版 1.0.0 的签名私钥在制作环境重置后无法找到，因此本版采用独立包名和新签名。不要为安装时本而卸载旧版；旧数据可先导出留存，当前没有 JSON 自动导入。新签名私钥尚需独立、由用户控制的安全备份，源码/GitHub 备份不能替代它。详见 `docs/INSTALL_AND_BACKUP.md` 与 `docs/SIGNING_KEY_RECOVERY.md`。
 
 ## 测试
 
 以下是项目可运行的验证命令；1.0.1 实际执行情况与历史 1.0.0 结果分开记录在测试报告中。
 
-- `python3 tests/branding/check.py .`：品牌文案、版本与数据兼容标识的静态检查
+- `python3 tests/branding/check.py .`：品牌文案、版本、独立应用身份与数据格式的 39 项静态检查
+- `python3 tests/release/check.py shiben-release.apk`：19 项正式 APK 身份、签名、公钥证书、文案字节码、隐私与非调试标志检查（需 JDK 与 BuildTools35.0.0）
 
 - `./gradlew testDebugUnitTest`：65 个纯 Java 测试
 - `bash tests/store/run.sh .`：25 个实际 Java 辅助方法断言与 13 个提取 SQL 契约检查；后者不是 Android SQLite 运行时测试
 - `./gradlew assembleDebugAndroidTest`：构建独立的自定义 Android 集成测试 APK（无测试钩子进入正式 APK）
-- 在一次性模拟器上安装 Debug app 与测试 APK 后执行 `adb shell am instrument -w cn.focusledger.test/cn.focusledger.LedgerInstrumentation`
+- 在一次性模拟器上安装 Debug app 与测试 APK 后执行 `adb shell am instrument -w cn.goff.shiben.test/cn.focusledger.LedgerInstrumentation`。集成测试会创建测试数据，只能在一次性测试环境运行，不能对用户实际记录运行。
 - Android 测试的计时到点用注入既往 14分55秒的夹具加真实 5秒到点流程缩短等待；不代表真实手机连续 15分钟锁屏测试。
 
 本次实测与未测试范围见 `docs/TEST_REPORT.md`。许可/工具清单见 `docs/DEPENDENCIES.md`。
