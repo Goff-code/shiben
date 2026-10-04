@@ -34,9 +34,12 @@ run(bt / "zipalign", "-c", "-p", "4", apk)
 check("Verified using v2 scheme (APK Signature Scheme v2): true" in signature, "valid APK v2 signature")
 check("Verified using v3 scheme (APK Signature Scheme v3): true" in signature, "valid APK v3 signature")
 check("Number of signers: 1" in signature, "one release signer")
-if len(sys.argv) < 3 or not re.fullmatch(r"[0-9a-fA-F]{64}", sys.argv[2]):
-    raise SystemExit("Usage: check.py signed.apk EXPECTED_V2_CERTIFICATE_SHA256 (public fingerprint, not a secret)")
-fingerprint = sys.argv[2].lower()
+cert = (root / "docs/SHIBEN_V2_RELEASE_CERTIFICATE.pem").read_text()
+der = base64.b64decode("".join(line for line in cert.splitlines() if not line.startswith("-----")))
+fingerprint = hashlib.sha256(der).hexdigest()
+if len(sys.argv) >= 3:
+    check(re.fullmatch(r"[0-9a-fA-F]{64}", sys.argv[2]) and sys.argv[2].lower() == fingerprint,
+          "supplied public fingerprint matches the pinned V2 certificate")
 check("Signer #1 certificate SHA-256 digest: " + fingerprint in signature, "expected pinned public release certificate")
 check(fingerprint not in ("21448561864130135118013f194f94187e8ad887086351c395da230193996261", "2bdb75da4e44bff3b8d38cce39807d67e11b6868c965fac23d22812cf7492045"), "new user-controlled V2 signing identity")
 check("package: name='cn.goff.shiben' versionCode='3' versionName='2.0.0'" in badging, "independent package and release version")

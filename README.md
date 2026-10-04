@@ -31,6 +31,6 @@ python3 scripts/check-unsigned-apk.py app/build/outputs/apk/release/app-release-
 
 安装身份保持 `cn.goff.shiben`；2.0.0 / code3 / min26 / target35。release 默认未签名。
 
-旧版签名已丢失。本次正式密钥不在云端生成；由用户 Mac 后续生成和保管，再本地签名。云端 debug 仅测试。V3 必须相同包名+V2相同正式证书+更大versionCode覆盖升级。详情见 `docs/INSTALL_AND_BACKUP.md`、`docs/SIGNING_KEY_RECOVERY.md`。不要上传私钥或密码。
+旧版签名已丢失。本次正式密钥已在用户 Mac 本机创建、保管并完成正式包签名；云端没有收到私钥或密码。公开证书保存在 `docs/SHIBEN_V2_RELEASE_CERTIFICATE.pem`，正式包核验见 `docs/RELEASE_V2_VERIFICATION.md`。云端 debug 仅测试。V3 必须相同包名+V2相同正式证书+更大versionCode覆盖升级。详情见 `docs/INSTALL_AND_BACKUP.md`、`docs/SIGNING_KEY_RECOVERY.md`。不要上传私钥或密码。
 
 计时使用单调时钟，暂停不计入；重启只保留已保存检查点。精确提醒权限、通知渠道与手机后台限制影响提醒。realme GT6 / UI7.0 须真机验证。
