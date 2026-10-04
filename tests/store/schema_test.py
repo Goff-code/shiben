@@ -83,3 +83,13 @@ db.execute('INSERT INTO daily_task_snapshots VALUES (?,?,?,?,?,?,?,?)', ('2026-1
 check(db.execute('SELECT title,progress,weight FROM daily_task_snapshots WHERE day=? AND archived=1', ('2026-10-04',)).fetchone() == ('今日任务',40,1.0), 'archived-today evidence retained beside contiguous active rank')
 check(db.execute('SELECT title,rank,progress,weight,legacy_done FROM daily_task_snapshots WHERE day=?', ('2026-10-03',)).fetchone() == ('旧任务',None,None,None,1), 'today mutations leave historical metadata unchanged')
 print(f'PASS ({checks} checks including V2): nondestructive SQL migration, unknown legacy fields, progress constraints, unique ranks, archived retention, immutable history')
+
+# History lists meaningful evidence, not an untouched empty daily header.
+db.execute('INSERT INTO daily_snapshots VALUES (?,?,?)', ('2026-10-05',1,0))
+db.execute('INSERT INTO daily_snapshots VALUES (?,?,?)', ('2026-10-06',1,0))
+db.execute('INSERT INTO daily_task_snapshots VALUES (?,?,?,?,?,?,?,?)', ('2026-10-06','archived-only','已移除任务',1,0,1.0,1,None))
+query = re.search(r'"(SELECT DISTINCT day FROM daily_task_snapshots UNION SELECT day FROM task_checks)"', source).group(1)
+days = {row[0] for row in db.execute(query)}
+check('2026-10-05' not in days, 'header-only empty day excluded from history')
+check('2026-10-06' in days and '2026-10-03' in days, 'archived-only day and legacy checklist day retained in history')
+print(f'PASS ({checks} checks including history visibility): empty headers hidden without deleting recorded evidence')

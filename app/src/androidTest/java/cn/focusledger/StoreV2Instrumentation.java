@@ -28,7 +28,7 @@ public final class StoreV2Instrumentation extends Instrumentation {
     public static int run(Context context, java.util.function.Consumer<String> progress) throws Exception {
         StoreV2Instrumentation suite = new StoreV2Instrumentation();
         suite.testContext = context; suite.progressSink = progress;
-        suite.freshStore(); suite.migration();
+        suite.freshStore(); suite.migration(); suite.historyEvidence();
         return suite.checks;
     }
     private Context targetContext() { return testContext == null ? getTargetContext() : testContext; }
@@ -43,7 +43,7 @@ public final class StoreV2Instrumentation extends Instrumentation {
     @Override public void onStart() {
         Bundle result = new Bundle();
         try {
-            freshStore(); migration();
+            freshStore(); migration(); historyEvidence();
             result.putString("stream", output + "OK (" + checks + " checks)\n"); result.putInt("checks", checks);
             finish(Activity.RESULT_OK, result);
         } catch (Throwable error) {
@@ -59,6 +59,7 @@ public final class StoreV2Instrumentation extends Instrumentation {
             store.ensureToday();
             check(store.getTasks(today).isEmpty(), "fresh install contains no fabricated demo tasks");
             check(store.getDaySnapshot(today).totalProgress == 0, "empty day starts at zero");
+            check(store.getRecordedDays().isEmpty(), "fresh header-only day does not create a history entry");
             LedgerStore.Task a = store.saveSimpleTask("A", 100, 1);
             LedgerStore.Task b = store.saveSimpleTask("B", 40, 2);
             LedgerStore.Task c = store.saveSimpleTask("C", 20, 3);
@@ -141,6 +142,29 @@ public final class StoreV2Instrumentation extends Instrumentation {
             check(store.getSession("clock-rollback") != null && store.getDaySnapshot(today).totalProgress == 80,
                     "timer persistence still works during date rollback without mutating frozen progress");
             check(store.getTasks(yesterday).get(0).title.equals("C"), "historical getTasks reads snapshot names and order");
+        }
+    }
+
+    private void historyEvidence() {
+        Context context = new IsolatedContext(targetContext(), "history-" + System.nanoTime());
+        LocalDate today = LocalDate.now(), yesterday = today.minusDays(1);
+        try (LedgerStore store = new LedgerStore(context)) {
+            store.ensureToday();
+            LedgerStore.Task task = store.saveSimpleTask("Removed task",0,1);
+            store.archiveTask(task.id);
+            check(store.getTasks(today).isEmpty() && store.getRecordedDays().contains(today)
+                            && find(store.getDaySnapshot(today),task.id).archived,
+                    "archived-only day remains in history after its last active task is removed");
+            Session zero = Session.manual("zero-duration","historical-task","Recorded zero-duration session",null,
+                    yesterday.atTime(12,0).atZone(ZoneId.systemDefault()).toInstant().toEpochMilli(),0,
+                    ZoneId.systemDefault().getId(),false);
+            store.addManualSession(zero);
+            check(store.getRecordedDays().contains(yesterday) && store.getDaySnapshot(yesterday).totalActualMs == 0,
+                    "zero-duration session date remains visible as recorded evidence");
+            store.deleteSession(zero.id);
+            check(store.getSessions().isEmpty() && store.getRecordedDays().contains(yesterday)
+                            && find(store.getDaySnapshot(yesterday),zero.taskId).title.equals(zero.taskTitle),
+                    "deleting the last session retains its historical task evidence and date");
         }
     }
 

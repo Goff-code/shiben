@@ -568,11 +568,11 @@ public final class LedgerStore extends SQLiteOpenHelper {
         return new DaySnapshot(day, items, total, complete, totalFocus);
     }
 
-    /** Every stored snapshot/checklist/session day, newest first. No time-based expiry. */
+    /** Days with recorded task/checklist/session evidence, newest first. Empty headers are not history. */
     public synchronized List<LocalDate> getRecordedDays() {
         TreeSet<LocalDate> days = new TreeSet<>(Collections.reverseOrder());
         try (Cursor c = getReadableDatabase().rawQuery(
-                "SELECT day FROM daily_snapshots UNION SELECT day FROM task_checks", null)) {
+                "SELECT DISTINCT day FROM daily_task_snapshots UNION SELECT day FROM task_checks", null)) {
             while (c.moveToNext()) days.add(LocalDate.parse(c.getString(0)));
         }
         for (Session session : getSessions()) days.addAll(sessionDays(session));
