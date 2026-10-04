@@ -10,7 +10,9 @@ mkdir -p "$OUT/main" "$OUT/test"
 "$JDK/bin/javac" --release 17 -cp "$ANDROID_JAR" -d "$OUT/main" \
   "$ROOT"/app/src/main/java/cn/focusledger/core/*.java \
   "$ROOT/app/src/main/java/cn/focusledger/LedgerStore.java" \
-  "$ROOT/app/src/main/java/cn/focusledger/Reports.java"
+  "$ROOT/app/src/main/java/cn/focusledger/Reports.java" \
+  "$ROOT/app/src/main/java/cn/focusledger/V2Reports.java" \
+  "$ROOT/app/src/main/java/cn/focusledger/DailyArchive.java"
 "$JDK/bin/javac" --release 17 -cp "$OUT/main:$ANDROID_JAR" -d "$OUT/test" \
   "$TEST_ROOT/cn/focusledger/StoreReportsHostTest.java"
 "$JDK/bin/java" -cp "$OUT/test:$OUT/main:$ANDROID_JAR" cn.focusledger.StoreReportsHostTest

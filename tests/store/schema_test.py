@@ -54,3 +54,32 @@ for plan in (1, 14, 16, 2147483647):
         rejected = True
     check(rejected, f'invalid plan rejected: {plan}')
 print(f'PASS ({checks} checks): extracted SQLite schema, snapshots, idempotence, tombstones, atomic rollback, duration contract')
+
+# Execute the actual V2 DDL and the SQL migration over the retained V1 fixture.
+v2_body = source[source.index('private static void createV2Schema'):source.index('public synchronized List<Project>')]
+for statement in re.findall(r'db\.execSQL\((.*?)\);', v2_body, re.S):
+    literals = re.findall(r'"((?:[^"\\]|\\.)*)"', statement)
+    db.execute(''.join(json.loads('"' + literal + '"') for literal in literals))
+migration = source[source.index('@Override public void onUpgrade'):source.index('private static void createV2Schema')]
+for statement in re.findall(r'db\.execSQL\((.*?)\);', migration, re.S):
+    literals = re.findall(r'"((?:[^"\\]|\\.)*)"', statement)
+    db.execute(''.join(json.loads('"' + literal + '"') for literal in literals))
+check(db.execute('SELECT complete,legacy FROM daily_snapshots').fetchone() == (0,1), 'migration marks historical inventory incomplete')
+check(db.execute('SELECT title,rank,progress,weight,legacy_done FROM daily_task_snapshots').fetchone() == ('旧任务',None,None,None,1), 'migration keeps legacy check and unknown rank/progress/weight')
+check(db.execute('SELECT record,deleted FROM sessions').fetchone() == (b'first',1), 'migration keeps tombstone and serialized record unchanged')
+db.execute('INSERT INTO daily_snapshots VALUES (?,?,?)', ('2026-10-04',1,0))
+db.execute('INSERT INTO daily_task_snapshots VALUES (?,?,?,?,?,?,?,?)', ('2026-10-04','t','今日任务',1,40,1.0,0,None))
+for invalid in (-1,101):
+    rejected=False
+    try: db.execute('UPDATE daily_task_snapshots SET progress=? WHERE day=?', (invalid,'2026-10-04'))
+    except sqlite3.IntegrityError: rejected=True
+    check(rejected, f'progress {invalid} rejected by SQLite itself')
+rejected=False
+try: db.execute('INSERT INTO daily_task_snapshots VALUES (?,?,?,?,?,?,?,?)', ('2026-10-04','duplicate','重复优先级',1,0,.5,0,None))
+except sqlite3.IntegrityError: rejected=True
+check(rejected, 'duplicate active day rank rejected by unique index')
+db.execute('UPDATE daily_task_snapshots SET archived=1 WHERE day=? AND task_id=?', ('2026-10-04','t'))
+db.execute('INSERT INTO daily_task_snapshots VALUES (?,?,?,?,?,?,?,?)', ('2026-10-04','new','新任务',1,0,1.0,0,None))
+check(db.execute('SELECT title,progress,weight FROM daily_task_snapshots WHERE day=? AND archived=1', ('2026-10-04',)).fetchone() == ('今日任务',40,1.0), 'archived-today evidence retained beside contiguous active rank')
+check(db.execute('SELECT title,rank,progress,weight,legacy_done FROM daily_task_snapshots WHERE day=?', ('2026-10-03',)).fetchone() == ('旧任务',None,None,None,1), 'today mutations leave historical metadata unchanged')
+print(f'PASS ({checks} checks including V2): nondestructive SQL migration, unknown legacy fields, progress constraints, unique ranks, archived retention, immutable history')

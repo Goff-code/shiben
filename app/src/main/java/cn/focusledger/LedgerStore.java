@@ -6,6 +6,8 @@ import android.database.Cursor;
 import android.database.sqlite.SQLiteDatabase;
 import android.database.sqlite.SQLiteOpenHelper;
 
+import cn.focusledger.core.DailyTotals;
+import cn.focusledger.core.PriorityProgress;
 import cn.focusledger.core.Segment;
 import cn.focusledger.core.Session;
 import cn.focusledger.core.TimerEngine;
@@ -17,15 +19,23 @@ import java.io.ObjectInputStream;
 import java.io.ObjectOutputStream;
 import java.io.Serializable;
 import java.time.LocalDate;
+import java.time.Instant;
+import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.Map;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.Set;
+import java.util.TreeSet;
 import java.util.UUID;
 
 /** All app data stays in this app-private SQLite database. */
 public final class LedgerStore extends SQLiteOpenHelper {
     private static final String DATABASE_NAME = "focus-ledger.db";
-    private static final int DATABASE_VERSION = 1;
+    private static final int DATABASE_VERSION = 2;
+    private final Context appContext;
 
     public static final class Project {
         public String id;
@@ -99,8 +109,45 @@ public final class LedgerStore extends SQLiteOpenHelper {
         }
     }
 
+    /** Frozen daily metadata plus focus durations derived from the durable session ledger. */
+    public static final class DayTask {
+        public final String taskId, title;
+        /** One-based priority; -1 means not recorded by V1. */
+        public final int rank, progress;
+        /** NaN means unknown, not zero. */
+        public final double weight;
+        public final long actualMs;
+        /** Archived during this day; retained as evidence, excluded from this day's active total. */
+        public final boolean archived;
+        public final Boolean legacyDone;
+
+        public DayTask(String taskId, String title, int rank, int progress, double weight,
+                       long actualMs, boolean archived, Boolean legacyDone) {
+            this.taskId = taskId; this.title = title; this.rank = rank; this.progress = progress;
+            this.weight = weight; this.actualMs = actualMs; this.archived = archived;
+            this.legacyDone = legacyDone;
+        }
+    }
+
+    public static final class DaySnapshot {
+        public final LocalDate day;
+        public final List<DayTask> items;
+        /** NaN when the daily task inventory or any active progress is unknown. */
+        public final double totalProgress;
+        public final boolean completeSnapshot;
+        public final long totalActualMs;
+
+        public DaySnapshot(LocalDate day, List<DayTask> items, double totalProgress,
+                           boolean completeSnapshot, long totalActualMs) {
+            this.day = day; this.items = Collections.unmodifiableList(new ArrayList<>(items));
+            this.totalProgress = totalProgress; this.completeSnapshot = completeSnapshot;
+            this.totalActualMs = totalActualMs;
+        }
+    }
+
     public LedgerStore(Context context) {
         super(context.getApplicationContext(), DATABASE_NAME, null, DATABASE_VERSION);
+        appContext = context.getApplicationContext();
         setWriteAheadLoggingEnabled(true);
     }
 
@@ -126,24 +173,39 @@ public final class LedgerStore extends SQLiteOpenHelper {
         db.execSQL("CREATE INDEX sessions_started ON sessions(started_wall_ms DESC)");
         db.execSQL("CREATE TABLE timer_state (singleton INTEGER PRIMARY KEY CHECK(singleton=1), "
                 + "record BLOB NOT NULL)");
-        seedDefaults(db);
+        createV2Schema(db);
     }
 
     @Override public void onUpgrade(SQLiteDatabase db, int oldVersion, int newVersion) {
+        if (oldVersion == 1 && newVersion == 2) {
+            createV2Schema(db);
+            // Checklists are evidence of names/binary check marks, never evidence of percentages,
+            // old priority ranks, the full task inventory, or V2 weights.
+            db.execSQL("INSERT OR IGNORE INTO daily_snapshots(day,complete,legacy) "
+                    + "SELECT DISTINCT day,0,1 FROM task_checks");
+            db.execSQL("INSERT OR IGNORE INTO daily_task_snapshots "
+                    + "(day,task_id,title,rank,progress,weight,archived,legacy_done) "
+                    + "SELECT day,task_id,task_title,NULL,NULL,NULL,0,done FROM task_checks");
+            // Session blobs are deliberately untouched. Read using their unchanged serialVersionUID.
+            try (Cursor c = db.query("sessions", new String[]{"record"}, "deleted=0", null,
+                    null, null, "started_wall_ms,id")) {
+                while (c.moveToNext()) recordSessionEvidence(db, deserialize(c.getBlob(0), Session.class));
+            }
+            return;
+        }
         // Never drop personal history to handle an unknown schema revision.
         throw new IllegalStateException("Unsupported database upgrade: " + oldVersion + " -> " + newVersion);
     }
 
-    private void seedDefaults(SQLiteDatabase db) {
-        String[] names = {"Web3", "英语", "锻炼", "读书", "个人IP", "代码视频"};
-        String[] titles = {"阅读一篇 Web3 研究", "英语听说练习", "完成今天的训练", "阅读一章", "创作一段内容", "录制或剪辑代码视频"};
-        int[] colors = {0xff7c3aed, 0xff2563eb, 0xff059669, 0xffd97706, 0xffdb2777, 0xff0891b2};
-        for (int i = 0; i < names.length; i++) {
-            String projectId = "project-" + i;
-            db.insertOrThrow("projects", null, projectValues(new Project(projectId, names[i], colors[i], i)));
-            db.insertOrThrow("tasks", null, taskValues(new Task("task-" + i, titles[i], projectId,
-                    25, i, 127, null, false)));
-        }
+    private static void createV2Schema(SQLiteDatabase db) {
+        db.execSQL("CREATE TABLE daily_snapshots (day TEXT PRIMARY KEY NOT NULL, "
+                + "complete INTEGER NOT NULL CHECK(complete IN (0,1)), legacy INTEGER NOT NULL DEFAULT 0)");
+        db.execSQL("CREATE TABLE daily_task_snapshots (day TEXT NOT NULL REFERENCES daily_snapshots(day), "
+                + "task_id TEXT NOT NULL, title TEXT NOT NULL, rank INTEGER CHECK(rank >= 1), "
+                + "progress INTEGER CHECK(progress BETWEEN 0 AND 100), "
+                + "weight REAL CHECK(weight BETWEEN 0 AND 1), archived INTEGER NOT NULL DEFAULT 0, "
+                + "legacy_done INTEGER, PRIMARY KEY(day,task_id))");
+        db.execSQL("CREATE UNIQUE INDEX daily_active_rank ON daily_task_snapshots(day,rank) WHERE archived=0");
     }
 
     public synchronized List<Project> getProjects() {
@@ -183,28 +245,51 @@ public final class LedgerStore extends SQLiteOpenHelper {
         project.id = requireText(project.id, "分类编号");
         project.name = requireText(project.name, "分类名称");
         if (getProject(project.id) == null) throw new IllegalArgumentException("找不到这个分类");
-        getWritableDatabase().update("projects", projectValues(project), "id=?", new String[]{project.id});
+        SQLiteDatabase db = getWritableDatabase();
+        LocalDate today = LocalDate.now();
+        db.beginTransaction();
+        try {
+            requireEditableDay(db, today);
+            ensureTodayInTransaction(db, today);
+            db.update("projects", projectValues(project), "id=?", new String[]{project.id});
+            writeOrder(db, activeTasks(db));
+            refreshTodaySnapshot(db, today);
+            db.setTransactionSuccessful();
+        } finally { db.endTransaction(); }
+        notifyArchive();
     }
 
     /** Archive, never erase category or task history. */
     public synchronized void archiveProject(String id) {
+        LocalDate today = LocalDate.now();
         SQLiteDatabase db = getWritableDatabase();
         db.beginTransaction();
         try {
+            requireEditableDay(db, today);
+            ensureTodayInTransaction(db, today);
             ContentValues values = new ContentValues();
             values.put("archived", 1);
             db.update("projects", values, "id=?", new String[]{requireText(id, "分类编号")});
             db.update("tasks", values, "project_id=?", new String[]{id});
+            writeOrder(db, activeTasks(db));
+            refreshTodaySnapshot(db, today);
             db.setTransactionSuccessful();
         } finally { db.endTransaction(); }
+        notifyArchive();
     }
 
+    /** Today's active single-level list; older dates use only recorded snapshot rows. */
     public synchronized List<Task> getTasks(LocalDate day) {
         if (day == null) throw new IllegalArgumentException("日期不能为空");
+        if (day.equals(LocalDate.now()) && !isBeforeLatestDay(getReadableDatabase(), day))
+            return activeTasks(getReadableDatabase());
         List<Task> result = new ArrayList<>();
-        for (Task task : getAllTasks()) {
-            Project p = getProject(task.projectId);
-            if (!task.archived && p != null && !p.archived && task.scheduledOn(day)) result.add(task);
+        for (DayTask item : getDaySnapshot(day).items) {
+            Task current = getTask(item.taskId);
+            // plannedMinutes is a compatibility timer setting, not a claimed historical planned value.
+            result.add(new Task(item.taskId, item.title, current == null ? null : current.projectId,
+                    current == null ? 25 : current.plannedMinutes, item.rank < 1 ? -1 : item.rank - 1,
+                    127, null, item.archived));
         }
         return result;
     }
@@ -225,6 +310,7 @@ public final class LedgerStore extends SQLiteOpenHelper {
     }
 
     public synchronized void saveTask(Task task) {
+        LocalDate today = LocalDate.now();
         if (task == null) throw new IllegalArgumentException("任务不能为空");
         if (task.id == null || task.id.trim().isEmpty()) task.id = UUID.randomUUID().toString();
         task.title = requireText(task.title, "任务名称");
@@ -245,45 +331,43 @@ public final class LedgerStore extends SQLiteOpenHelper {
         }
         if (task.sort < 0) task.sort = nextSort("tasks");
         SQLiteDatabase db = getWritableDatabase();
-        // UPDATE avoids REPLACE's delete/insert behavior and retains checklist references.
-        if (db.update("tasks", taskValues(task), "id=?", new String[]{task.id}) == 0)
-            db.insertOrThrow("tasks", null, taskValues(task));
-    }
-
-    public synchronized void deleteTask(String id) {
-        ContentValues values = new ContentValues();
-        values.put("archived", 1);
-        getWritableDatabase().update("tasks", values, "id=?", new String[]{requireText(id, "任务编号")});
-    }
-
-    public synchronized void moveTask(String id, int delta) {
-        if (delta == 0) return;
-        List<Task> active = new ArrayList<>();
-        for (Task task : getAllTasks()) {
-            Project project = getProject(task.projectId);
-            if (!task.archived && project != null && !project.archived) active.add(task);
-        }
-        int from = -1;
-        for (int i = 0; i < active.size(); i++) if (active.get(i).id.equals(id)) { from = i; break; }
-        if (from < 0) return;
-        int to = (int) Math.max(0L, Math.min(active.size() - 1L, (long) from + delta));
-        if (from == to) return;
-        Task moved = active.remove(from);
-        active.add(to, moved);
-        SQLiteDatabase db = getWritableDatabase();
         db.beginTransaction();
         try {
-            for (int i = 0; i < active.size(); i++) {
-                ContentValues values = new ContentValues();
-                values.put("sort", i);
-                db.update("tasks", values, "id=?", new String[]{active.get(i).id});
-            }
+            requireEditableDay(db, today);
+            ensureTodayInTransaction(db, today);
+            // UPDATE avoids REPLACE's delete/insert behavior and retains checklist references.
+            if (db.update("tasks", taskValues(task), "id=?", new String[]{task.id}) == 0)
+                db.insertOrThrow("tasks", null, taskValues(task));
+            writeOrder(db, activeTasks(db));
+            refreshTodaySnapshot(db, today);
             db.setTransactionSuccessful();
         } finally { db.endTransaction(); }
+        notifyArchive();
+    }
+
+    public synchronized void deleteTask(String id) { archiveTask(id); }
+
+    public synchronized void moveTask(String id, int delta) {
+        LocalDate today = LocalDate.now();
+        if (delta == 0) return;
+        List<String> ids = new ArrayList<>();
+        for (Task task : getTasks(today)) ids.add(task.id);
+        int from = ids.indexOf(id);
+        if (from < 0) return;
+        int to = (int) Math.max(0L, Math.min(ids.size() - 1L, (long) from + delta));
+        ids.remove(from); ids.add(to, id);
+        reorderTasks(ids);
     }
 
     public synchronized boolean taskDone(String taskId, LocalDate day) {
         if (taskId == null || day == null) return false;
+        if (day.equals(LocalDate.now())) {
+            ensureToday();
+            try (Cursor c = getReadableDatabase().query("daily_task_snapshots", new String[]{"progress"},
+                    "task_id=? AND day=?", new String[]{taskId, day.toString()}, null, null, null)) {
+                return c.moveToFirst() && !c.isNull(0) && c.getInt(0) == 100;
+            }
+        }
         try (Cursor c = getReadableDatabase().query("task_checks", new String[]{"done"},
                 "task_id=? AND day=?", new String[]{taskId, day.toString()}, null, null, null)) {
             return c.moveToFirst() && c.getInt(0) != 0;
@@ -292,7 +376,10 @@ public final class LedgerStore extends SQLiteOpenHelper {
 
     /** Explicit self-report. Completing a timer never sets this flag. */
     public synchronized void setTaskDone(String taskId, LocalDate day, boolean done) {
+        LocalDate today = LocalDate.now();
         if (day == null) throw new IllegalArgumentException("日期不能为空");
+        if (!day.equals(today)) throw new IllegalArgumentException("历史进度为只读快照");
+        setTaskProgress(taskId, done ? 100 : 0);
         Task task = getTask(taskId);
         if (task == null) throw new IllegalArgumentException("找不到这个任务");
         ContentValues values = new ContentValues();
@@ -320,19 +407,329 @@ public final class LedgerStore extends SQLiteOpenHelper {
         return result;
     }
 
+    /** Opens the current day with fresh progress, without rewriting any preceding day. */
+    public synchronized void ensureToday() {
+        LocalDate today = LocalDate.now();
+        SQLiteDatabase db = getWritableDatabase();
+        boolean changed;
+        db.beginTransaction();
+        try {
+            changed = ensureTodayInTransaction(db, today);
+            db.setTransactionSuccessful();
+        } finally { db.endTransaction(); }
+        if (changed) notifyArchive();
+    }
+
+    public synchronized Task saveSimpleTask(String name, int initialProgress, int rank) {
+        LocalDate today = LocalDate.now();
+        name = requireText(name, "任务名称");
+        PriorityProgress.requireProgress(initialProgress);
+        SQLiteDatabase db = getWritableDatabase();
+        Task task;
+        db.beginTransaction();
+        try {
+            requireEditableDay(db, today);
+            ensureTodayInTransaction(db, today);
+            List<Task> active = activeTasks(db);
+            requireRank(rank, active.size() + 1);
+            ensureInternalProject(db);
+            task = new Task(UUID.randomUUID().toString(), name, "v2-default", 25, rank - 1);
+            db.insertOrThrow("tasks", null, taskValues(task));
+            active.add(rank - 1, task);
+            writeOrder(db, active);
+            refreshTodaySnapshot(db, today);
+            writeProgress(db, task.id, initialProgress, today);
+            db.setTransactionSuccessful();
+        } finally { db.endTransaction(); }
+        notifyArchive();
+        return task;
+    }
+
+    public synchronized void updateSimpleTask(String id, String name, int rank) {
+        LocalDate today = LocalDate.now();
+        name = requireText(name, "任务名称");
+        SQLiteDatabase db = getWritableDatabase();
+        db.beginTransaction();
+        try {
+            requireEditableDay(db, today);
+            ensureTodayInTransaction(db, today);
+            List<Task> active = activeTasks(db);
+            requireRank(rank, active.size());
+            Task found = null;
+            for (Task task : active) if (task.id.equals(id)) { found = task; break; }
+            if (found == null) throw new IllegalArgumentException("找不到这个任务");
+            found.title = name;
+            active.remove(found); active.add(rank - 1, found);
+            ContentValues values = new ContentValues(); values.put("title", name);
+            db.update("tasks", values, "id=?", new String[]{id});
+            writeOrder(db, active);
+            refreshTodaySnapshot(db, today);
+            db.setTransactionSuccessful();
+        } finally { db.endTransaction(); }
+        notifyArchive();
+    }
+
+    /** Manual input is the only path that changes a task's percentage. */
+    public synchronized void setTaskProgress(String id, int progress) {
+        LocalDate today = LocalDate.now();
+        PriorityProgress.requireProgress(progress);
+        SQLiteDatabase db = getWritableDatabase();
+        db.beginTransaction();
+        try {
+            requireEditableDay(db, today);
+            ensureTodayInTransaction(db, today);
+            boolean exists = false;
+            for (Task task : activeTasks(db)) if (task.id.equals(id)) { exists = true; break; }
+            if (!exists) throw new IllegalArgumentException("找不到可用的任务");
+            writeProgress(db, id, progress, today);
+            db.setTransactionSuccessful();
+        } finally { db.endTransaction(); }
+        notifyArchive();
+    }
+
+    public synchronized void reorderTasks(List<String> orderedIds) {
+        LocalDate today = LocalDate.now();
+        if (orderedIds == null) throw new IllegalArgumentException("任务顺序不能为空");
+        SQLiteDatabase db = getWritableDatabase();
+        db.beginTransaction();
+        try {
+            requireEditableDay(db, today);
+            ensureTodayInTransaction(db, today);
+            List<Task> active = activeTasks(db), ordered = new ArrayList<>();
+            Map<String, Task> byId = new HashMap<>();
+            for (Task task : active) byId.put(task.id, task);
+            if (orderedIds.size() != active.size()) throw new IllegalArgumentException("任务顺序必须包含全部可用任务");
+            for (String id : orderedIds) {
+                Task task = byId.remove(id);
+                if (task == null) throw new IllegalArgumentException("任务顺序重复或无效");
+                ordered.add(task);
+            }
+            writeOrder(db, ordered);
+            refreshTodaySnapshot(db, today);
+            db.setTransactionSuccessful();
+        } finally { db.endTransaction(); }
+        notifyArchive();
+    }
+
+    /** Today's archived work remains visible in history, outside the active weighted total. */
+    public synchronized void archiveTask(String id) {
+        LocalDate today = LocalDate.now();
+        id = requireText(id, "任务编号");
+        SQLiteDatabase db = getWritableDatabase();
+        db.beginTransaction();
+        try {
+            requireEditableDay(db, today);
+            ensureTodayInTransaction(db, today);
+            ContentValues values = new ContentValues(); values.put("archived", 1);
+            if (db.update("tasks", values, "id=?", new String[]{id}) == 0)
+                throw new IllegalArgumentException("找不到这个任务");
+            writeOrder(db, activeTasks(db));
+            refreshTodaySnapshot(db, today);
+            db.setTransactionSuccessful();
+        } finally { db.endTransaction(); }
+        notifyArchive();
+    }
+
+    public synchronized DaySnapshot getDaySnapshot(LocalDate day) {
+        if (day == null) throw new IllegalArgumentException("日期不能为空");
+        if (day.equals(LocalDate.now())) ensureToday();
+        SQLiteDatabase db = getReadableDatabase();
+        boolean complete = false;
+        try (Cursor c = db.query("daily_snapshots", new String[]{"complete"}, "day=?",
+                new String[]{day.toString()}, null, null, null)) {
+            if (c.moveToFirst()) complete = c.getInt(0) != 0;
+        }
+        Map<String, Long> focus = new HashMap<>();
+        long totalFocus = 0L;
+        for (Session session : getSessions()) {
+            long actual = DailyTotals.totalsByDay(session).getOrDefault(day, 0L);
+            if (actual > 0) {
+                focus.put(session.taskId, Math.addExact(focus.getOrDefault(session.taskId, 0L), actual));
+                totalFocus = Math.addExact(totalFocus, actual);
+            }
+        }
+        List<DayTask> items = new ArrayList<>();
+        double total = complete ? 0d : Double.NaN;
+        try (Cursor c = db.query("daily_task_snapshots", null, "day=?", new String[]{day.toString()},
+                null, null, "archived,CASE WHEN rank IS NULL THEN 1 ELSE 0 END,rank,task_id")) {
+            while (c.moveToNext()) {
+                String id = string(c, "task_id");
+                int rank = nullableInt(c, "rank", -1), progress = nullableInt(c, "progress", -1);
+                int weightColumn = c.getColumnIndexOrThrow("weight");
+                double weight = c.isNull(weightColumn) ? Double.NaN : c.getDouble(weightColumn);
+                boolean archived = integer(c, "archived") != 0;
+                int doneColumn = c.getColumnIndexOrThrow("legacy_done");
+                Boolean done = c.isNull(doneColumn) ? null : c.getInt(doneColumn) != 0;
+                items.add(new DayTask(id, string(c, "title"), rank, progress, weight,
+                        focus.getOrDefault(id, 0L), archived, done));
+                if (!archived) total += progress < 0 || rank < 1 ? Double.NaN : progress * weight;
+            }
+        }
+        return new DaySnapshot(day, items, total, complete, totalFocus);
+    }
+
+    /** Every stored snapshot/checklist/session day, newest first. No time-based expiry. */
+    public synchronized List<LocalDate> getRecordedDays() {
+        TreeSet<LocalDate> days = new TreeSet<>(Collections.reverseOrder());
+        try (Cursor c = getReadableDatabase().rawQuery(
+                "SELECT day FROM daily_snapshots UNION SELECT day FROM task_checks", null)) {
+            while (c.moveToNext()) days.add(LocalDate.parse(c.getString(0)));
+        }
+        for (Session session : getSessions()) days.addAll(sessionDays(session));
+        return new ArrayList<>(days);
+    }
+
+    private static void requireRank(int rank, int count) {
+        if (rank < 1 || rank > count) throw new IllegalArgumentException("优先级须在 1 到 " + count + " 之间");
+    }
+
+    private static int nullableInt(Cursor c, String column, int fallback) {
+        int index = c.getColumnIndexOrThrow(column);
+        return c.isNull(index) ? fallback : c.getInt(index);
+    }
+
+    private static List<Task> activeTasks(SQLiteDatabase db) {
+        List<Task> result = new ArrayList<>();
+        try (Cursor c = db.rawQuery("SELECT tasks.* FROM tasks JOIN projects ON tasks.project_id=projects.id "
+                + "WHERE tasks.archived=0 AND projects.archived=0 ORDER BY tasks.sort,tasks.id", null)) {
+            while (c.moveToNext()) result.add(taskFrom(c));
+        }
+        return result;
+    }
+
+    private static void writeOrder(SQLiteDatabase db, List<Task> tasks) {
+        for (int i = 0; i < tasks.size(); i++) {
+            tasks.get(i).sort = i;
+            ContentValues values = new ContentValues(); values.put("sort", i);
+            db.update("tasks", values, "id=?", new String[]{tasks.get(i).id});
+        }
+    }
+
+    private static void ensureInternalProject(SQLiteDatabase db) {
+        ContentValues values = projectValues(new Project("v2-default", "任务", 0xff15877d, 0));
+        db.insertWithOnConflict("projects", null, values, SQLiteDatabase.CONFLICT_IGNORE);
+    }
+
+    /** A backwards device date must never reopen a finalized prior-day snapshot for editing. */
+    private static boolean isBeforeLatestDay(SQLiteDatabase db, LocalDate day) {
+        try (Cursor c = db.rawQuery("SELECT MAX(day) FROM daily_snapshots WHERE complete=1", null)) {
+            return c.moveToFirst() && !c.isNull(0) && day.isBefore(LocalDate.parse(c.getString(0)));
+        }
+    }
+
+    private static void requireEditableDay(SQLiteDatabase db, LocalDate day) {
+        if (isBeforeLatestDay(db, day))
+            throw new IllegalStateException("设备日期早于已记录日期，请校准日期后修改任务或进度；历史记录已保留");
+    }
+
+    private static boolean ensureTodayInTransaction(SQLiteDatabase db, LocalDate today) {
+        // Reading history and saving elapsed timer evidence remain safe during a clock rollback.
+        if (isBeforeLatestDay(db, today)) return false;
+        boolean exists = false, complete = false;
+        try (Cursor c = db.query("daily_snapshots", new String[]{"complete"}, "day=?",
+                new String[]{today.toString()}, null, null, null)) {
+            if (c.moveToFirst()) { exists = true; complete = c.getInt(0) != 0; }
+        }
+        if (exists && complete) return false;
+        ContentValues values = new ContentValues();
+        values.put("day", today.toString()); values.put("complete", 1); values.put("legacy", exists ? 1 : 0);
+        if (exists) db.update("daily_snapshots", values, "day=?", new String[]{today.toString()});
+        else db.insertOrThrow("daily_snapshots", null, values);
+        writeOrder(db, activeTasks(db));
+        // On the migration day V1 progress is unknown for every carried task. The next day
+        // starts at the specified V2 baseline of zero. An explicit input can resolve it today.
+        refreshTodaySnapshot(db, today, exists);
+        return true;
+    }
+
+    private static void refreshTodaySnapshot(SQLiteDatabase db, LocalDate today) {
+        refreshTodaySnapshot(db, today, false);
+    }
+
+    private static void refreshTodaySnapshot(SQLiteDatabase db, LocalDate today, boolean legacy) {
+        List<Task> active = activeTasks(db);
+        Set<String> activeIds = new HashSet<>();
+        for (Task task : active) activeIds.add(task.id);
+        // Archive non-active rows first and release all live rank slots before reassigning.
+        List<String> existingIds = new ArrayList<>();
+        try (Cursor c = db.query("daily_task_snapshots", new String[]{"task_id"}, "day=?",
+                new String[]{today.toString()}, null, null, null)) {
+            while (c.moveToNext()) existingIds.add(c.getString(0));
+        }
+        for (String id : existingIds) {
+            ContentValues v = new ContentValues();
+            if (activeIds.contains(id)) v.putNull("rank");
+            else v.put("archived", 1);
+            db.update("daily_task_snapshots", v, "day=? AND task_id=?", new String[]{today.toString(), id});
+        }
+        for (int i = 0; i < active.size(); i++) {
+            Task task = active.get(i);
+            ContentValues values = new ContentValues();
+            values.put("day", today.toString()); values.put("task_id", task.id); values.put("title", task.title);
+            values.put("rank", i + 1); values.put("weight", PriorityProgress.weight(i + 1, active.size()));
+            values.put("archived", 0);
+            int count = db.update("daily_task_snapshots", values, "day=? AND task_id=?",
+                    new String[]{today.toString(), task.id});
+            if (count == 0) {
+                if (legacy) values.putNull("progress"); else values.put("progress", 0);
+                db.insertOrThrow("daily_task_snapshots", null, values);
+            }
+        }
+    }
+
+    private static void writeProgress(SQLiteDatabase db, String id, int progress, LocalDate day) {
+        ContentValues values = new ContentValues(); values.put("progress", progress);
+        int changed = db.update("daily_task_snapshots", values, "day=? AND task_id=? AND archived=0",
+                new String[]{day.toString(), id});
+        if (changed != 1) throw new IllegalArgumentException("找不到今天的任务快照");
+    }
+
+    private static Set<LocalDate> sessionDays(Session session) {
+        Set<LocalDate> days = new HashSet<>(DailyTotals.totalsByDay(session).keySet());
+        if (days.isEmpty()) days.add(Instant.ofEpochMilli(session.startedWallMs)
+                .atZone(ZoneId.of(session.zoneId)).toLocalDate());
+        return days;
+    }
+
+    /** Unknown historical fields are never inferred from the user's current task list. */
+    private static void recordSessionEvidence(SQLiteDatabase db, Session session) {
+        for (LocalDate day : sessionDays(session)) {
+            ContentValues header = new ContentValues(); header.put("day", day.toString());
+            header.put("complete", 0); header.put("legacy", 1);
+            db.insertWithOnConflict("daily_snapshots", null, header, SQLiteDatabase.CONFLICT_IGNORE);
+            boolean complete = false;
+            try (Cursor c = db.query("daily_snapshots", new String[]{"complete"}, "day=?",
+                    new String[]{day.toString()}, null, null, null)) {
+                if (c.moveToFirst()) complete = c.getInt(0) != 0;
+            }
+            ContentValues values = new ContentValues(); values.put("day", day.toString());
+            values.put("task_id", session.taskId); values.put("title", session.taskTitle);
+            values.put("archived", complete ? 1 : 0);
+            db.insertWithOnConflict("daily_task_snapshots", null, values, SQLiteDatabase.CONFLICT_IGNORE);
+        }
+    }
+
+    private void notifyArchive() { DailyArchive.schedule(appContext); }
+
+
     /**
      * Completion + next timer state are one durable transaction. A stable session id is
      * the exactly-once key, including retries after a process dies during completion.
      * null state clears the timer; null completion only checkpoints a running/paused timer.
      */
     public synchronized void persistTimer(TimerEngine.State state, Session completion) {
+        LocalDate today = LocalDate.now();
         byte[] stateBytes = state == null || state.sessionId == null ? null : serialize(state);
         ContentValues completionValues = completion == null ? null : sessionValues(completion);
         SQLiteDatabase db = getWritableDatabase();
         db.beginTransaction();
         try {
-            if (completionValues != null) db.insertWithOnConflict("sessions", null, completionValues,
-                    SQLiteDatabase.CONFLICT_IGNORE);
+            ensureTodayInTransaction(db, today);
+            if (completionValues != null) {
+                long inserted = db.insertWithOnConflict("sessions", null, completionValues,
+                        SQLiteDatabase.CONFLICT_IGNORE);
+                if (inserted != -1) recordSessionEvidence(db, completion);
+            }
             if (stateBytes == null) db.delete("timer_state", "singleton=1", null);
             else {
                 ContentValues values = new ContentValues();
@@ -342,6 +739,7 @@ public final class LedgerStore extends SQLiteOpenHelper {
             }
             db.setTransactionSuccessful();
         } finally { db.endTransaction(); }
+        if (completion != null) notifyArchive();
     }
 
     public synchronized TimerEngine.State loadTimer() {
@@ -373,6 +771,7 @@ public final class LedgerStore extends SQLiteOpenHelper {
         ContentValues values = new ContentValues();
         values.put("deleted", 1);
         getWritableDatabase().update("sessions", values, "id=?", new String[]{requireText(id, "记录编号")});
+        notifyArchive();
     }
 
     public synchronized void saveEditedSession(Session session) {
@@ -384,19 +783,25 @@ public final class LedgerStore extends SQLiteOpenHelper {
             ContentValues values = sessionValues(session);
             if (db.update("sessions", values, "id=? AND deleted=0", new String[]{session.id}) == 0)
                 throw new IllegalArgumentException("找不到需要更正的记录");
+            recordSessionEvidence(db, session);
             db.setTransactionSuccessful();
         } finally { db.endTransaction(); }
+        notifyArchive();
     }
 
     public synchronized void addManualSession(Session session) {
+        LocalDate today = LocalDate.now();
         if (session == null || !session.manual) throw new IllegalArgumentException("补记记录需要标记为手动补记");
         SQLiteDatabase db = getWritableDatabase();
         db.beginTransaction();
         try {
             validateManualBoundary(session);
+            ensureTodayInTransaction(db, today);
             db.insertOrThrow("sessions", null, sessionValues(session));
+            recordSessionEvidence(db, session);
             db.setTransactionSuccessful();
         } finally { db.endTransaction(); }
+        notifyArchive();
     }
 
     private void validateManualBoundary(Session session) {
