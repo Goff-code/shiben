@@ -1,0 +1,9 @@
+// QA ONLY: use with assembleDebug; never deliver or formally sign this temporary version.
+allprojects {
+    plugins.withId('com.android.application') {
+        androidComponents.finalizeDsl { extension ->
+            extension.defaultConfig.versionCode = 4
+            extension.defaultConfig.versionName = '2.0.0-qa-upgrade'
+        }
+    }
+}
