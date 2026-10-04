@@ -21,11 +21,23 @@ import java.util.List;
 /** Real SQLite migration and snapshot checks; runs only in the test APK, with isolated databases. */
 public final class StoreV2Instrumentation extends Instrumentation {
     private int checks;
+    private Context testContext;
+    private java.util.function.Consumer<String> progressSink;
+
+    /** Called by the APK's single registered runner; uses isolated databases, never its live ledger. */
+    public static int run(Context context, java.util.function.Consumer<String> progress) throws Exception {
+        StoreV2Instrumentation suite = new StoreV2Instrumentation();
+        suite.testContext = context; suite.progressSink = progress;
+        suite.freshStore(); suite.migration();
+        return suite.checks;
+    }
+    private Context targetContext() { return testContext == null ? getTargetContext() : testContext; }
     private final StringBuilder output = new StringBuilder();
     private void check(boolean condition, String name) {
         if (!condition) throw new AssertionError(name);
         checks++; output.append("PASS ").append(name).append('\n');
-        Bundle progress = new Bundle(); progress.putString("stream", "PASS " + name + "\n"); sendStatus(0, progress);
+        if (progressSink != null) progressSink.accept(name);
+        else { Bundle progress = new Bundle(); progress.putString("stream", "PASS " + name + "\n"); sendStatus(0, progress); }
     }
     @Override public void onCreate(Bundle args) { super.onCreate(args); start(); }
     @Override public void onStart() {
@@ -41,7 +53,7 @@ public final class StoreV2Instrumentation extends Instrumentation {
     }
 
     private void freshStore() throws Exception {
-        Context context = new IsolatedContext(getTargetContext(), "fresh-" + System.nanoTime());
+        Context context = new IsolatedContext(targetContext(), "fresh-" + System.nanoTime());
         LocalDate today = LocalDate.now(), yesterday = today.minusDays(1);
         try (LedgerStore store = new LedgerStore(context)) {
             store.ensureToday();
@@ -133,7 +145,7 @@ public final class StoreV2Instrumentation extends Instrumentation {
     }
 
     private void migration() {
-        Context context = new IsolatedContext(getTargetContext(), "legacy-" + System.nanoTime());
+        Context context = new IsolatedContext(targetContext(), "legacy-" + System.nanoTime());
         LocalDate oldDay = LocalDate.now().minusDays(1000);
         Session original = Session.manual("old-session", "old-task", "Session-era name", "old-project",
                 oldDay.atTime(23,59,30).atZone(ZoneId.of("UTC")).toInstant().toEpochMilli(),60000,"UTC",false);
