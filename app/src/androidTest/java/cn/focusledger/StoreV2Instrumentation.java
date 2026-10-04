@@ -161,6 +161,8 @@ public final class StoreV2Instrumentation extends Instrumentation {
             db.execSQL("INSERT INTO projects VALUES ('old-project','Old category',0,8,0)");
             db.execSQL("INSERT INTO tasks VALUES ('old-task','Current legacy name','old-project',25,19,1,NULL,0)");
             db.execSQL("INSERT INTO task_checks VALUES ('old-task',?,1,'Checklist-era name','old-project')",new Object[]{oldDay.toString()});
+            db.execSQL("INSERT INTO task_checks VALUES ('old-task',?,0,'Legacy today name','old-project')",
+                    new Object[]{LocalDate.now().toString()});
             db.execSQL("INSERT INTO sessions VALUES ('old-session',?,?,'old-project','old-task','Old category',?,0)",
                     new Object[]{original.startedWallMs,original.endedWallMs,sessionBlob});
             db.execSQL("INSERT INTO timer_state VALUES (1,?)",new Object[]{timerBlob});
@@ -182,6 +184,12 @@ public final class StoreV2Instrumentation extends Instrumentation {
             check(Arrays.equals(sessionBlob, LedgerStore.serialize(store.getSession("old-session"))),
                     "saved session serialization survives migration unchanged");
             store.ensureToday();
+            check(find(store.getDaySnapshot(LocalDate.now()),"old-task").progress == -1
+                            && Double.isNaN(store.getDaySnapshot(LocalDate.now()).totalProgress),
+                    "migration-day binary unchecked mark does not fabricate zero percent progress");
+            store.setTaskProgress("old-task",60);
+            check(store.getDaySnapshot(LocalDate.now()).totalProgress == 60,
+                    "explicit manual input resolves migration-day unknown progress");
             check(store.getTasks(LocalDate.now()).size()==1 && store.getTasks(LocalDate.now()).get(0).sort==0,
                     "legacy active task carries into single-level list with normalized current priority");
             check(sameMetadata(old,store.getDaySnapshot(oldDay)), "opening today never fills unknown historical priorities");
