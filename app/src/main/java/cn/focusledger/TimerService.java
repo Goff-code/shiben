@@ -4,6 +4,8 @@ import android.app.*;
 import android.content.*;
 import android.content.pm.ServiceInfo;
 import android.graphics.Color;
+import android.media.AudioAttributes;
+import android.media.RingtoneManager;
 import android.os.*;
 import cn.focusledger.core.*;
 
@@ -44,13 +46,26 @@ public final class TimerService extends Service {
         if(!paused)b.setWhen(System.currentTimeMillis()+remaining).setUsesChronometer(true).setChronometerCountDown(true);
         return b.build();
     }
+    private static String completionChannel(Context context) {
+        android.content.SharedPreferences prefs=context.getSharedPreferences("shiben-settings",Context.MODE_PRIVATE);
+        boolean sound=prefs.getBoolean("sound",true), vibration=prefs.getBoolean("vibration",true);
+        String id="shiben_done_"+(sound?"sound":"quiet")+"_"+(vibration?"vibrate":"still");
+        NotificationChannel channel=new NotificationChannel(id,"专注结束 · "+(sound?"声音":"静音")+" · "+(vibration?"振动":"无振动"),NotificationManager.IMPORTANCE_HIGH);
+        channel.setDescription("声音和振动仍由系统音量、勿扰及渠道设置共同控制");
+        channel.enableVibration(vibration);
+        if(vibration)channel.setVibrationPattern(new long[]{0,250,150,250});
+        if(sound)channel.setSound(RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION),new AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_NOTIFICATION).build());
+        else channel.setSound(null,null);
+        ((NotificationManager)context.getSystemService(NOTIFICATION_SERVICE)).createNotificationChannel(channel);
+        return id;
+    }
     static String format(long ms){long sec=(ms+999)/1000;return String.format(java.util.Locale.ROOT,"%02d:%02d",sec/60,sec%60);}
     public static void notifyFinished(Context context,Session session){
         channels(context);
-        if(!TimerCoordinator.get(context).notificationsGranted())return;
+        if(!context.getSharedPreferences("shiben-settings",Context.MODE_PRIVATE).getBoolean("reminders",true)||!TimerCoordinator.get(context).notificationsGranted())return;
         String title="expired".equals(session.reason)?"本轮专注已结束":"计时已安全恢复";
-        String text="expired".equals(session.reason)?session.taskTitle+" · 已记录 "+format(session.actualMs)+"，请自行确认任务完成。":"设备重启，本轮仅记录重启前已保存的专注时间。";
-        Notification n=new Notification.Builder(context,DONE).setSmallIcon(R.drawable.ic_notification).setContentTitle(title).setContentText(text)
+        String text="expired".equals(session.reason)?session.taskTitle+" · 已记录 "+format(session.actualMs)+"，任务进度需手动更新。":"设备重启，本轮仅记录重启前已保存的专注时间。";
+        Notification n=new Notification.Builder(context,completionChannel(context)).setSmallIcon(R.drawable.ic_notification).setContentTitle(title).setContentText(text)
             .setStyle(new Notification.BigTextStyle().bigText(text)).setAutoCancel(true).setContentIntent(open(context))
             .setCategory(Notification.CATEGORY_ALARM).setVisibility(Notification.VISIBILITY_PRIVATE).build();
         ((NotificationManager)context.getSystemService(NOTIFICATION_SERVICE)).notify(2,n);

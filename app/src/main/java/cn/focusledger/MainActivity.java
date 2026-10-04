@@ -1,434 +1,152 @@
 package cn.focusledger;
 
 import android.Manifest;
-import android.app.Activity;
-import android.app.AlertDialog;
-import android.app.DatePickerDialog;
-import android.app.TimePickerDialog;
-import android.content.ClipData;
-import android.content.ClipboardManager;
-import android.content.Context;
-import android.content.Intent;
+import android.app.*;
+import android.content.*;
 import android.content.pm.PackageManager;
-import android.graphics.Canvas;
-import android.graphics.Color;
-import android.graphics.Paint;
-import android.graphics.RectF;
+import android.graphics.BitmapFactory;
 import android.graphics.Typeface;
-import android.graphics.drawable.GradientDrawable;
 import android.net.Uri;
-import android.os.Build;
-import android.os.Bundle;
-import android.os.Handler;
-import android.os.Looper;
+import android.os.*;
 import android.provider.Settings;
-import android.text.InputType;
-import android.view.Gravity;
-import android.view.View;
-import android.view.WindowInsets;
-import android.widget.ArrayAdapter;
-import android.widget.Button;
-import android.widget.CheckBox;
-import android.widget.EditText;
-import android.widget.FrameLayout;
-import android.widget.LinearLayout;
-import android.widget.RadioButton;
-import android.widget.RadioGroup;
-import android.widget.ScrollView;
-import android.widget.Spinner;
-import android.widget.TextView;
-import android.widget.Toast;
-
-import cn.focusledger.core.DailyTotals;
+import android.text.*;
+import android.view.*;
+import android.widget.*;
 import cn.focusledger.core.Session;
 import cn.focusledger.core.TimerEngine;
-
-import java.io.OutputStream;
-import java.nio.charset.StandardCharsets;
-import java.time.DayOfWeek;
-import java.time.Instant;
-import java.time.LocalDate;
-import java.time.LocalDateTime;
-import java.time.LocalTime;
-import java.time.ZoneId;
+import java.io.*;
+import java.time.*;
 import java.time.format.DateTimeFormatter;
-import java.time.format.ResolverStyle;
-import java.time.temporal.TemporalAdjusters;
-import java.util.ArrayList;
-import java.util.LinkedHashMap;
-import java.util.List;
-import java.util.Locale;
-import java.util.Map;
-import java.util.UUID;
+import java.util.*;
+import static cn.focusledger.UiKit.*;
 
-/** A dependency-free, local-only native interface. Stored records are never demo data. */
+/** Three native, offline pages. All displayed records come from the user's database. */
 public final class MainActivity extends Activity {
-    private static final int PAPER = Color.rgb(246,244,239), INK = Color.rgb(23,44,43),
-            JADE = Color.rgb(35,105,90), MUTED = Color.rgb(100,118,111),
-            LINE = Color.rgb(223,229,222), PALE = Color.rgb(231,239,231),
-            AMBER = Color.rgb(153,101,46), RED = Color.rgb(165,66,52);
-    private static final int REQUEST_EXPORT = 401, REQUEST_NOTIFICATIONS = 402;
-    private static final DateTimeFormatter DATE = DateTimeFormatter.ofPattern("uuuu-MM-dd", Locale.ROOT).withResolverStyle(ResolverStyle.STRICT);
-    private static final DateTimeFormatter INPUT_CLOCK = DateTimeFormatter.ofPattern("HH:mm[:ss]", Locale.ROOT).withResolverStyle(ResolverStyle.STRICT);
-    private static final DateTimeFormatter CLOCK = DateTimeFormatter.ofPattern("HH:mm", Locale.ROOT).withResolverStyle(ResolverStyle.STRICT);
-    private final Handler handler = new Handler(Looper.getMainLooper());
-    private TimerCoordinator coordinator;
-    private LedgerStore store;
-    private LinearLayout root, body, tabs;
-    private ScrollView scroll;
-    private LocalDate selectedDate = LocalDate.now();
-    private int selectedTab = 0;
-    private boolean weekView;
-    private boolean hasResumed;
-    private final int[] scrollPositions = new int[3];
-    private TextView timerClock, timerStatus, timerElapsed;
-    private TimerDial timerDial;
-    private String renderedTimerId;
-    private boolean renderedPaused;
-    private String pendingExport, pendingExportKind;
-    private AlertDialog editingDialog;
-    private String editingKind, editingId;
-    private java.util.function.Supplier<Bundle> editingDraft;
-    private Bundle pendingDialogDraft;
-    private String pendingDialogKind, pendingDialogId;
-    private final Runnable ticker = new Runnable() {
-        @Override public void run() {
-            try {
-                Session completed = coordinator.refresh();
-                TimerEngine.State state = coordinator.engine().snapshot();
-                String nowId = state == null ? null : state.sessionId;
-                boolean paused = state != null && state.paused;
-                if (completed != null || !same(renderedTimerId, nowId) || renderedPaused != paused) {
-                    render(true);
-                    if (completed != null) toast("本次专注已记录。任务是否完成，由你勾选。");
-                } else updateTimer();
-            } catch (RuntimeException ex) { /* A later resume can retry; dialogs stay open. */ }
-            handler.postDelayed(this, 1000);
-        }
-    };
+    private static final int SAVE_FILE=401, NOTIFY=402, BACKUP_TREE=403;
+    private final Handler handler=new Handler(Looper.getMainLooper());
+    private TimerCoordinator timer; private LedgerStore store;
+    private LinearLayout root,body; private FrameLayout content; private ScrollView scroll;
+    private int tab=0,minutes=25; private String page="",selectedTaskId,editId,completedId;
+    private LocalDate today=LocalDate.now(),detailDay=LocalDate.now(),rangeStart=LocalDate.now(),rangeEnd=LocalDate.now();
+    private String rangeMode="day",exportFormat="MARKDOWN",exportJobId,pendingFile,pendingMime,pendingName;
+    private TextView clock,elapsed,status,exportStatus; private UiKit.Ring ring;
+    private String renderedSession; private boolean renderedPaused;
+    private EditText editorName; private SeekBar editorProgress; private Spinner editorRank;
+    private String draftName; private int draftProgress,draftRank=-1;
+    private ArrayList<String> reorderIds; private boolean reordered;
+    private AlertDialog activeDialog; private String dialogKind,dialogTask; private int dialogValue;
+    private Bundle restoreDialog;
+    private final Runnable ticker=new Runnable(){public void run(){
+        try {
+            Session done=timer.refresh(); LocalDate now=LocalDate.now();
+            if(!today.equals(now)){today=now;store.ensureToday();DailyArchive.schedule(MainActivity.this);render();}
+            TimerEngine.State s=timer.engine().snapshot();String id=s.sessionId;
+            if(done!=null){completedId=done.id;DailyArchive.schedule(MainActivity.this);if(tab==0)render();}
+            else if(!Objects.equals(renderedSession,id)||renderedPaused!=s.paused){if(tab==0&&page.isEmpty())render();}
+            updateTimer();
+        }catch(RuntimeException e){if(status!=null)status.setText("记录暂时无法读取，请重试");}
+        handler.postDelayed(this,1000);
+    }};
 
-    @Override public void onCreate(Bundle state) {
-        super.onCreate(state);
-        coordinator = TimerCoordinator.get(this);
-        store = coordinator.store();
-        if (state != null) {
-            try { selectedDate = LocalDate.parse(state.getString("date", LocalDate.now().toString()), DATE); } catch (RuntimeException ignored) { }
-            selectedTab = state.getInt("tab", 0);
-            weekView = state.getBoolean("week", false);
-            pendingExportKind = state.getString("exportKind");
-            pendingDialogKind = state.getString("dialogKind"); pendingDialogId = state.getString("dialogId"); pendingDialogDraft = state.getBundle("dialogDraft");
-            int[] saved = state.getIntArray("scroll");
-            if (saved != null && saved.length == 3) System.arraycopy(saved, 0, scrollPositions, 0, 3);
-        }
-        getWindow().setStatusBarColor(PAPER);
-        getWindow().setNavigationBarColor(PAPER);
-        getWindow().getDecorView().setSystemUiVisibility(View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR | View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR);
-        root = column();
-        root.setBackgroundColor(PAPER);
-        root.setOnApplyWindowInsetsListener((v, insets) -> {
-            if (Build.VERSION.SDK_INT >= 30) {
-                android.graphics.Insets system = insets.getInsets(WindowInsets.Type.systemBars() | WindowInsets.Type.displayCutout() | WindowInsets.Type.ime());
-                root.setPadding(system.left, system.top, system.right, system.bottom);
-            } else root.setPadding(insets.getSystemWindowInsetLeft(), insets.getSystemWindowInsetTop(), insets.getSystemWindowInsetRight(), insets.getSystemWindowInsetBottom());
-            return insets;
-        });
-        setContentView(root);
-        root.requestApplyInsets();
-        render(false);
-        if (pendingDialogKind != null) root.post(this::restoreDialog);
+    @Override public void onCreate(Bundle saved){super.onCreate(saved);timer=TimerCoordinator.get(this);store=timer.store();
+        if(saved!=null){tab=saved.getInt("tab");page=saved.getString("page","");minutes=saved.getInt("minutes",25);selectedTaskId=saved.getString("task");editId=saved.getString("editId");completedId=saved.getString("completedId");detailDay=date(saved.getString("detail"));rangeStart=date(saved.getString("rangeStart"));rangeEnd=date(saved.getString("rangeEnd"));rangeMode=saved.getString("rangeMode","day");exportFormat=saved.getString("format","MARKDOWN");exportJobId=saved.getString("job");pendingFile=saved.getString("pendingFile");pendingMime=saved.getString("pendingMime");pendingName=saved.getString("pendingName");draftName=saved.getString("draftName");draftProgress=saved.getInt("draftProgress");draftRank=saved.getInt("draftRank",-1);reorderIds=saved.getStringArrayList("order");reordered=saved.getBoolean("reordered");restoreDialog=saved.getBundle("dialog");}
+        getWindow().setStatusBarColor(PAPER);getWindow().setNavigationBarColor(PAPER);getWindow().getDecorView().setSystemUiVisibility(View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR|View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR);
+        root=column();root.setBackgroundColor(PAPER);root.setOnApplyWindowInsetsListener((v,insets)->{if(Build.VERSION.SDK_INT>=30){android.graphics.Insets a=insets.getInsets(WindowInsets.Type.systemBars()|WindowInsets.Type.displayCutout()|WindowInsets.Type.ime());root.setPadding(a.left,a.top,a.right,a.bottom);}else root.setPadding(insets.getSystemWindowInsetLeft(),insets.getSystemWindowInsetTop(),insets.getSystemWindowInsetRight(),insets.getSystemWindowInsetBottom());return insets;});setContentView(root);root.requestApplyInsets();
+        try{store.ensureToday();DailyArchive.schedule(this);}catch(RuntimeException e){toast("记录初始化失败，数据未被删除");}render();
+        if(restoreDialog!=null)root.post(()->{if("progress".equals(restoreDialog.getString("kind")))progressDialog(restoreDialog.getString("task"),restoreDialog.getInt("value"));restoreDialog=null;});
     }
-
-    @Override protected void onResume() {
-        super.onResume();
-        if (coordinator != null) {
-            try { coordinator.restoreFromForeground(); } catch (RuntimeException ex) { toast("计时恢复暂时失败，请稍后重试。"); }
-            render(hasResumed);
-            hasResumed=true;
-            handler.removeCallbacks(ticker);
-            handler.post(ticker);
+    @Override protected void onResume(){super.onResume();try{timer.restoreFromForeground();store.ensureToday();DailyArchive.schedule(this);if(tab==0&&completedId==null&&!timer.engine().isActive()){List<Session> all=store.getSessions();if(!all.isEmpty()){Session s=all.get(0);String ack=prefs().getString("ack","");if(!s.id.equals(ack)&&"expired".equals(s.reason))completedId=s.id;}}}catch(RuntimeException e){toast("计时恢复暂时失败，请稍后重试");}render();handler.removeCallbacks(ticker);handler.post(ticker);if(exportJobId!=null)ExportWorker.get(this).observe(exportJobId,this::onExportChanged);}
+    @Override protected void onPause(){handler.removeCallbacks(ticker);if(exportJobId!=null)ExportWorker.get(this).detach(exportJobId);super.onPause();}
+    @Override protected void onDestroy(){handler.removeCallbacksAndMessages(null);if(activeDialog!=null)activeDialog.dismiss();super.onDestroy();}
+    @Override protected void onSaveInstanceState(Bundle s){captureDraft();s.putInt("tab",tab);s.putString("page",page);s.putInt("minutes",minutes);s.putString("task",selectedTaskId);s.putString("editId",editId);s.putString("completedId",completedId);s.putString("detail",detailDay.toString());s.putString("rangeStart",rangeStart.toString());s.putString("rangeEnd",rangeEnd.toString());s.putString("rangeMode",rangeMode);s.putString("format",exportFormat);s.putString("job",exportJobId);s.putString("pendingFile",pendingFile);s.putString("pendingMime",pendingMime);s.putString("pendingName",pendingName);s.putString("draftName",draftName);s.putInt("draftProgress",draftProgress);s.putInt("draftRank",draftRank);s.putStringArrayList("order",reorderIds);s.putBoolean("reordered",reordered);if(activeDialog!=null&&activeDialog.isShowing()&&dialogKind!=null){Bundle d=new Bundle();d.putString("kind",dialogKind);d.putString("task",dialogTask);d.putInt("value",dialogValue);s.putBundle("dialog",d);}super.onSaveInstanceState(s);}
+    private android.content.SharedPreferences prefs(){return getSharedPreferences("shiben-v2-ui",MODE_PRIVATE);}
+    private LocalDate date(String s){try{return LocalDate.parse(s);}catch(Exception e){return LocalDate.now();}}
+    private void render(){if(root==null)return;captureDraft();root.removeAllViews();clock=null;elapsed=null;status=null;ring=null;editorName=null;editorProgress=null;editorRank=null;exportStatus=null;
+        content=new FrameLayout(this);root.addView(content,new LinearLayout.LayoutParams(-1,0,1));
+        body=column();body.setPadding(dp(this,22),dp(this,16),dp(this,22),dp(this,20));
+        if(tab==0&&page.isEmpty()){scroll=null;content.addView(body,new FrameLayout.LayoutParams(-1,-1));renderFocus();}
+        else{scroll=new ScrollView(this);scroll.setFillViewport(true);scroll.setClipToPadding(false);scroll.addView(body,new ScrollView.LayoutParams(-1,-2));content.addView(scroll,new FrameLayout.LayoutParams(-1,-1));switch(page){case "edit":renderEditor();break;case "reorder":renderReorder();break;case "more":renderMore();break;case "settings":renderSettings();break;case "backup":renderBackup();break;case "weights":renderWeights();break;case "history":renderHistory();break;case "detail":renderDetail();break;case "export":renderExport();break;case "preview":renderPreview();break;default:if(tab==1)renderTasks();else renderToday();}}
+        buildTabs();TimerEngine.State s=timer.engine().snapshot();renderedSession=s.sessionId;renderedPaused=s.paused;updateTimer();
+    }
+    private void buildTabs(){divider(root);LinearLayout tabs=row();tabs.setPadding(dp(this,10),dp(this,7),dp(this,10),dp(this,6));String[] names={"专注","任务","今日"},icons={"focus","tasks","today"};for(int i=0;i<3;i++){final int t=i;LinearLayout cell=column();cell.setGravity(Gravity.CENTER);cell.setMinimumHeight(dp(this,58));Icon icon=new Icon(this,icons[i],i==tab?TEAL:MUTED);cell.addView(icon,new LinearLayout.LayoutParams(dp(this,25),dp(this,25)));TextView text=label(names[i],13,i==tab?TEAL:MUTED,false);text.setGravity(Gravity.CENTER);cell.addView(text);cell.setContentDescription(names[i]+(i==tab?"，已选中":""));cell.setFocusable(true);cell.setOnClickListener(v->leaveEditor(()->{tab=t;page="";clearDraft();render();}));tabs.addView(cell,new LinearLayout.LayoutParams(0,-2,1));}root.addView(tabs,new LinearLayout.LayoutParams(-1,-2));}
+    private void renderFocus(){TimerEngine.State s=timer.engine().snapshot();if(!timer.engine().isActive()&&completedId!=null){renderCompletion();return;}TextView heading=label(timer.engine().isActive()?(s.paused?"已暂停":"专注中"):"时本",25,INK,true);heading.setGravity(timer.engine().isActive()?Gravity.CENTER:Gravity.START);body.addView(heading,new LinearLayout.LayoutParams(-1,dp(this,42)));
+        if(timer.engine().isActive()){
+            TextView task=label(s.taskTitle,18,MUTED,false);task.setGravity(Gravity.CENTER);task.setMaxLines(1);task.setEllipsize(TextUtils.TruncateAt.END);body.addView(task,new LinearLayout.LayoutParams(-1,dp(this,30)));
+            ring=new UiKit.Ring(this);body.addView(ring,new LinearLayout.LayoutParams(-1,0,1));
+            elapsed=label("",15,MUTED,false);elapsed.setGravity(Gravity.CENTER);body.addView(elapsed,new LinearLayout.LayoutParams(-1,dp(this,36)));gap(body,10);
+            body.addView(button(s.paused?"继续专注":"暂停",true,()->run(()->{if(timer.engine().isPaused())timer.resume();else timer.pause();render();})),new LinearLayout.LayoutParams(-1,dp(this,56)));gap(body,8);
+            body.addView(button("结束",false,this::finishDialog),new LinearLayout.LayoutParams(-1,dp(this,48)));
+        }else{
+            FrameLayout timeArea=new FrameLayout(this);clock=label(TimerService.format(minutes*60000L),82,INK,false);clock.setTypeface(Typeface.create("sans-serif-light",Typeface.NORMAL));clock.setGravity(Gravity.CENTER);clock.setMaxLines(1);clock.setAutoSizeTextTypeUniformWithConfiguration(24,86,1,android.util.TypedValue.COMPLEX_UNIT_SP);timeArea.addView(clock,new FrameLayout.LayoutParams(-1,-1));body.addView(timeArea,new LinearLayout.LayoutParams(-1,0,1.5f));
+            List<LedgerStore.Task> tasks=store.getTasks(today);LedgerStore.Task selected=null;for(LedgerStore.Task t:tasks)if(t.id.equals(selectedTaskId))selected=t;if(selected==null&&!tasks.isEmpty()){selected=tasks.get(0);selectedTaskId=selected.id;}
+            body.addView(selector("任务",selected==null?"暂无任务":selected.title,this::chooseTask),new LinearLayout.LayoutParams(-1,dp(this,56)));gap(body,14);body.addView(selector("时长",minutes+" 分钟",this::chooseMinutes),new LinearLayout.LayoutParams(-1,dp(this,56)));
+            View space=new View(this);body.addView(space,new LinearLayout.LayoutParams(1,0,.65f));
+            if(selected==null){TextView hint=label("先添加一个任务",19,INK,true);hint.setGravity(Gravity.CENTER);body.addView(hint,new LinearLayout.LayoutParams(-1,dp(this,32)));gap(body,8);body.addView(button("添加任务",true,()->{tab=1;openEditor(null);}),new LinearLayout.LayoutParams(-1,dp(this,56)));}
+            else body.addView(button("开始专注",true,()->run(()->{if(timer.engine().isActive())return;LedgerStore.Task t=store.getTask(selectedTaskId);if(t==null||t.archived){render();return;}ackCompletion();timer.start(t,minutes);render();})),new LinearLayout.LayoutParams(-1,dp(this,56)));
+            body.addView(new View(this),new LinearLayout.LayoutParams(1,0,.65f));
         }
     }
-    @Override protected void onPause() { handler.removeCallbacks(ticker); super.onPause(); }
-    @Override protected void onSaveInstanceState(Bundle state) {
-        if (scroll != null) scrollPositions[selectedTab] = scroll.getScrollY();
-        state.putString("date", selectedDate.toString());
-        state.putInt("tab", selectedTab); state.putBoolean("week", weekView);
-        state.putIntArray("scroll", scrollPositions);
-        state.putString("exportKind", pendingExportKind);
-        if (editingDialog != null && editingDialog.isShowing() && editingDraft != null) {
-            state.putString("dialogKind", editingKind); state.putString("dialogId", editingId); state.putBundle("dialogDraft", editingDraft.get());
-        }
-        super.onSaveInstanceState(state);
-    }
+    private void updateTimer(){if(timer==null||!timer.engine().isActive())return;TimerEngine.State s=timer.engine().snapshot();long remain=timer.remainingMs();if(ring!=null&&tab==0)ring.set(s.plannedMs==0?0:(double)remain/s.plannedMs,TimerService.format(remain),"",s.paused);if(elapsed!=null)elapsed.setText("已专注 "+shortDuration(timer.actualMs()));}
+    private void renderCompletion(){Session s=store.getSession(completedId);if(s==null){completedId=null;renderFocus();return;}TextView h=label("本次专注完成",25,INK,true);h.setGravity(Gravity.CENTER);body.addView(h);FrameLayout center=new FrameLayout(this);LinearLayout stack=column();stack.setGravity(Gravity.CENTER);Icon check=new Icon(this,"check",TEAL);stack.addView(check,new LinearLayout.LayoutParams(dp(this,74),dp(this,74)));TextView duration=label(TimerService.format(s.actualMs),65,INK,false);duration.setGravity(Gravity.CENTER);stack.addView(duration);TextView title=label(s.taskTitle,18,MUTED,false);title.setGravity(Gravity.CENTER);stack.addView(title);center.addView(stack,new FrameLayout.LayoutParams(-1,-1));body.addView(center,new LinearLayout.LayoutParams(-1,0,1));notice(body,"任务进度需手动更新");gap(body,16);body.addView(button("调整任务进度",true,()->{String id=s.taskId;ackCompletion();tab=1;render();LedgerStore.Task task=store.getTask(id);if(task!=null&&!task.archived)progressDialog(id,-1);else toast("任务已移除，专注记录仍保留");}),new LinearLayout.LayoutParams(-1,dp(this,56)));gap(body,10);body.addView(button("返回专注",false,()->{ackCompletion();render();}),new LinearLayout.LayoutParams(-1,dp(this,52)));}
+    private void ackCompletion(){if(completedId!=null)prefs().edit().putString("ack",completedId).apply();completedId=null;}
+    private LinearLayout selector(String label,String value,Runnable click){LinearLayout r=row();r.setGravity(Gravity.CENTER_VERTICAL);TextView key=label(label,18,INK,false);r.addView(key,new LinearLayout.LayoutParams(dp(this,66),-1));key.setGravity(Gravity.CENTER_VERTICAL);LinearLayout box=row();box.setPadding(dp(this,15),0,dp(this,10),0);box.setGravity(Gravity.CENTER_VERTICAL);box.setBackground(shape(PAPER,LINE,6,this));TextView text=label(value,18,INK,false);text.setSingleLine();text.setEllipsize(TextUtils.TruncateAt.END);text.setAutoSizeTextTypeUniformWithConfiguration(13,18,1,2);box.addView(text,new LinearLayout.LayoutParams(0,-1,1));text.setGravity(Gravity.CENTER_VERTICAL);box.addView(new Icon(this,"down",MUTED),new LinearLayout.LayoutParams(dp(this,22),dp(this,22)));box.setContentDescription(label+"，"+value);box.setFocusable(true);box.setOnClickListener(v->click.run());r.addView(box,new LinearLayout.LayoutParams(0,-1,1));return r;}
+    private void chooseTask(){List<LedgerStore.Task> list=store.getTasks(today);if(list.isEmpty()){tab=1;openEditor(null);return;}String[] names=new String[list.size()];int selected=0;LedgerStore.DaySnapshot day=store.getDaySnapshot(today);for(int i=0;i<list.size();i++){LedgerStore.Task t=list.get(i);names[i]=t.title+"   "+progress(t.id,day)+"%";if(t.id.equals(selectedTaskId))selected=i;}final int[] pick={selected};new AlertDialog.Builder(this).setTitle("选择任务").setSingleChoiceItems(names,selected,(d,w)->pick[0]=w).setPositiveButton("确定",(d,w)->{selectedTaskId=list.get(pick[0]).id;render();}).setNegativeButton("取消",null).show();}
+    private void chooseMinutes(){LinearLayout box=column();box.setPadding(dp(this,24),dp(this,8),dp(this,24),dp(this,8));NumberPicker picker=new NumberPicker(this);picker.setMinValue(3);picker.setMaxValue(288);picker.setValue(minutes/5);picker.setFormatter(v->(v*5)+" 分钟");picker.setWrapSelectorWheel(false);box.addView(picker);TextView hint=label("最少 15 分钟，每次增加 5 分钟",13,MUTED,false);box.addView(hint);new AlertDialog.Builder(this).setTitle("专注时长").setView(box).setPositiveButton("确定",(d,w)->{picker.clearFocus();minutes=picker.getValue()*5;render();}).setNegativeButton("取消",null).show();}
+    private void finishDialog(){new AlertDialog.Builder(this).setTitle("结束本次专注？").setMessage("已专注 "+shortDuration(timer.actualMs())+"\n结束后保留本次记录，任务进度不变。").setNegativeButton("继续专注",null).setPositiveButton("结束并保存",(d,w)->run(()->{timer.finish();DailyArchive.schedule(this);render();})).show();}
 
-    private void render(boolean keepScroll) {
-        if (root == null) return;
-        if (keepScroll && scroll != null) scrollPositions[selectedTab] = scroll.getScrollY();
-        root.removeAllViews(); timerClock = null; timerStatus = null; timerElapsed = null; timerDial = null;
-        scroll = new ScrollView(this); scroll.setFillViewport(true); scroll.setClipToPadding(false);
-        body = column(); body.setPadding(dp(22), dp(20), dp(22), dp(28));
-        scroll.addView(body, new ScrollView.LayoutParams(-1,-2));
-        root.addView(scroll, new LinearLayout.LayoutParams(-1,0,1));
-        LinearLayout brand = row(); brand.setGravity(Gravity.CENTER_VERTICAL);
-        TextView logo = label("▤", 21, JADE, true); logo.setContentDescription("时本标志"); logo.setGravity(Gravity.CENTER);
-        logo.setBackground(shape(PALE, 12)); brand.addView(logo, new LinearLayout.LayoutParams(dp(38),dp(38)));
-        TextView brandText = label("时本", 16, INK, true); brandText.setPadding(dp(10),0,0,0); brand.addView(brandText);
-        TextView privateTag = label("本地 · 私人", 11, MUTED, false); privateTag.setGravity(Gravity.END);
-        brand.addView(privateTag, new LinearLayout.LayoutParams(0,-2,1)); body.addView(brand);
-        gap(body,22);
-        if (selectedTab == 0) renderToday(); else if (selectedTab == 1) renderStatistics(); else renderSettings();
-        buildTabs();
-        TimerEngine.State state = coordinator.engine().snapshot();
-        renderedTimerId = state == null ? null : state.sessionId; renderedPaused = state != null && state.paused;
-        updateTimer();
-        scroll.post(() -> scroll.scrollTo(0,scrollPositions[selectedTab]));
-    }
+    private void renderTasks(){LinearLayout header=header("当天任务",false);header.addView(iconButton("plus","新增任务",()->openEditor(null)));header.addView(iconButton("sort","调整优先级",()->{reorderIds=new ArrayList<>();for(LedgerStore.Task t:store.getTasks(today))reorderIds.add(t.id);reordered=false;page="reorder";render();}));gap(body,24);LedgerStore.DaySnapshot day=store.getDaySnapshot(today);List<LedgerStore.Task> tasks=store.getTasks(today);if(tasks.isEmpty()){empty("还没有任务","任务与项目使用同一列表",()->openEditor(null),"添加任务");return;}for(LedgerStore.Task t:tasks){View row=taskRow(t.title,progress(t.id,day),()->progressDialog(t.id,-1));row.setOnLongClickListener(v->{openEditor(t.id);return true;});row.setContentDescription(t.title+"，进度 "+progress(t.id,day)+"%，点击调整进度，长按编辑任务");body.addView(row);divider(body);}gap(body,18);TextView help=label("点击调整进度 · 长按编辑任务",12,MUTED,false);help.setGravity(Gravity.CENTER);body.addView(help);}
+    private int progress(String id,LedgerStore.DaySnapshot day){for(LedgerStore.DayTask t:day.items)if(t.taskId.equals(id))return Math.max(0,t.progress);return 0;}
+    private View taskRow(String title,int value,Runnable action){LinearLayout r=row();r.setGravity(Gravity.CENTER_VERTICAL);r.setMinimumHeight(dp(this,72));TextView name=label(title,18,INK,false);name.setMaxLines(2);name.setEllipsize(TextUtils.TruncateAt.END);r.addView(name,new LinearLayout.LayoutParams(0,-2,1.1f));UiKit.Bar bar=new UiKit.Bar(this,value);LinearLayout.LayoutParams bp=new LinearLayout.LayoutParams(0,dp(this,32),1.4f);bp.setMargins(dp(this,16),0,dp(this,14),0);r.addView(bar,bp);TextView percent=label(value<0?"未知":value+"%",15,INK,false);percent.setGravity(Gravity.END);r.addView(percent,new LinearLayout.LayoutParams(dp(this,48),-2));if(action!=null){r.setFocusable(true);r.setOnClickListener(v->action.run());}return r;}
+    private void progressDialog(String id,int restored){LedgerStore.Task task=store.getTask(id);if(task==null||task.archived)return;int old=progress(id,store.getDaySnapshot(today));dialogKind="progress";dialogTask=id;dialogValue=restored>=0?restored:old;LinearLayout box=column();box.setPadding(dp(this,24),dp(this,12),dp(this,24),dp(this,12));TextView title=label(task.title,19,INK,false);title.setGravity(Gravity.CENTER);box.addView(title);TextView number=label(dialogValue+"%",48,INK,false);number.setGravity(Gravity.CENTER);box.addView(number);SeekBar seek=new SeekBar(this);seek.setMax(100);seek.setProgress(dialogValue);seek.setContentDescription("任务进度，0 至 100 百分比");box.addView(seek,new LinearLayout.LayoutParams(-1,dp(this,56)));LinearLayout ends=row();ends.addView(label("0%",14,MUTED,false),new LinearLayout.LayoutParams(0,-2,1));ends.addView(label("100%",14,MUTED,false));box.addView(ends);seek.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener(){public void onProgressChanged(SeekBar b,int v,boolean user){dialogValue=v;number.setText(v+"%");}public void onStartTrackingTouch(SeekBar b){}public void onStopTrackingTouch(SeekBar b){}});AlertDialog dlg=new AlertDialog.Builder(this).setTitle("调整任务进度").setView(box).setNegativeButton("取消",null).setPositiveButton("保存进度",null).create();activeDialog=dlg;dlg.setOnShowListener(d->dlg.getButton(-1).setOnClickListener(v->{try{int current=progress(id,store.getDaySnapshot(today));store.setTaskProgress(id,seek.getProgress());DailyArchive.schedule(this);dlg.dismiss();render();if(current<100&&seek.getProgress()==100)celebrate(task.title);}catch(RuntimeException e){toast(e.getMessage());}}));dlg.setOnDismissListener(d->{if(activeDialog==dlg){activeDialog=null;dialogKind=null;}});dlg.show();}
+    private void celebrate(String title){UiKit.Fireworks f=new UiKit.Fireworks(this);content.addView(f,new FrameLayout.LayoutParams(-1,-1));toast(title+"已完成");handler.postDelayed(()->{if(f.getParent() instanceof android.view.ViewGroup)((android.view.ViewGroup)f.getParent()).removeView(f);},2000);}
+    private void openEditor(String id){clearDraft();editId=id;LedgerStore.Task t=store.getTask(id);draftName=t==null?"":t.title;draftProgress=t==null?0:progress(id,store.getDaySnapshot(today));draftRank=t==null?store.getTasks(today).size():Math.max(0,t.sort);page="edit";render();}
+    private void captureDraft(){if("edit".equals(page)&&editorName!=null){draftName=editorName.getText().toString();draftProgress=editorProgress==null?draftProgress:editorProgress.getProgress();draftRank=editorRank==null?draftRank:editorRank.getSelectedItemPosition();}}
+    private void clearDraft(){editId=null;draftName=null;draftRank=-1;editorName=null;editorProgress=null;editorRank=null;reorderIds=null;reordered=false;}
+    private void renderEditor(){header(editId==null?"新增任务":"编辑任务",true);gap(body,26);body.addView(label("任务名称",16,INK,true));gap(body,10);editorName=new EditText(this);editorName.setSingleLine(true);editorName.setTextSize(18);editorName.setTextColor(INK);editorName.setFilters(new InputFilter[]{new InputFilter.LengthFilter(30)});editorName.setBackground(shape(PAPER,LINE,7,this));editorName.setPadding(dp(this,14),dp(this,12),dp(this,14),dp(this,12));editorName.setText(draftName);editorName.setHint("输入任务或项目名称");body.addView(editorName,new LinearLayout.LayoutParams(-1,dp(this,58)));gap(body,8);body.addView(label("任务与项目共用一个列表 · 最多 30 字",12,MUTED,false));gap(body,30);
+        if(editId==null){body.addView(label("初始进度",16,INK,true));TextView n=label(draftProgress+"%",24,TEAL,false);body.addView(n);editorProgress=new SeekBar(this);editorProgress.setMax(100);editorProgress.setProgress(draftProgress);body.addView(editorProgress,new LinearLayout.LayoutParams(-1,dp(this,48)));editorProgress.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener(){public void onProgressChanged(SeekBar s,int p,boolean u){n.setText(p+"%");}public void onStartTrackingTouch(SeekBar s){}public void onStopTrackingTouch(SeekBar s){}});gap(body,24);}
+        body.addView(label("优先级",16,INK,true));gap(body,10);int count=store.getTasks(today).size()+(editId==null?1:0);List<String> ranks=new ArrayList<>();for(int i=0;i<count;i++)ranks.add("第 "+(i+1)+" 位"+(i==count-1?" · 列表末尾":""));editorRank=new Spinner(this);editorRank.setAdapter(new ArrayAdapter<>(this,android.R.layout.simple_spinner_dropdown_item,ranks));editorRank.setSelection(Math.min(Math.max(0,draftRank),Math.max(0,count-1)));body.addView(editorRank,new LinearLayout.LayoutParams(-1,dp(this,56)));gap(body,34);body.addView(button("保存任务",true,()->{captureDraft();run(()->{if(editId==null)store.saveSimpleTask(draftName,draftProgress,draftRank+1);else store.updateSimpleTask(editId,draftName,draftRank+1);DailyArchive.schedule(this);page="";clearDraft();render();});}),new LinearLayout.LayoutParams(-1,dp(this,56)));
+        if(editId!=null){gap(body,12);body.addView(button("调整进度",false,()->progressDialog(editId,-1)));gap(body,26);TextView remove=label("删除任务",17,RED,false);remove.setGravity(Gravity.CENTER);remove.setPadding(0,dp(this,15),0,dp(this,15));remove.setOnClickListener(v->new AlertDialog.Builder(this).setTitle("删除「"+store.getTask(editId).title+"」？").setMessage("从当前任务列表移除，已有专注记录与历史快照仍保留。今日总进度会按剩余任务重新计算。").setNegativeButton("取消",null).setPositiveButton("删除",(d,w)->run(()->{store.archiveTask(editId);DailyArchive.schedule(this);page="";clearDraft();render();})).show());body.addView(remove);}}
+    private void leaveEditor(Runnable next){if("edit".equals(page)||("reorder".equals(page)&&reordered))new AlertDialog.Builder(this).setTitle("放弃未保存的更改？").setNegativeButton("继续编辑",null).setPositiveButton("放弃",(d,w)->next.run()).show();else next.run();}
+    private void renderReorder(){LinearLayout h=header("调整优先级",true);h.addView(textAction("完成",()->run(()->{store.reorderTasks(reorderIds);DailyArchive.schedule(this);page="";clearDraft();render();})));gap(body,20);body.addView(label("长按拖动排序，也可用上下按钮。\n排序会影响今日总进度。",14,MUTED,false));gap(body,18);if(reorderIds==null){reorderIds=new ArrayList<>();for(LedgerStore.Task t:store.getTasks(today))reorderIds.add(t.id);}for(int i=0;i<reorderIds.size();i++){final int index=i;String id=reorderIds.get(i);LedgerStore.Task t=store.getTask(id);if(t==null)continue;LinearLayout row=row();row.setGravity(Gravity.CENTER_VERTICAL);row.setPadding(dp(this,12),dp(this,10),dp(this,8),dp(this,10));row.setBackground(shape(PAPER,LINE,10,this));row.addView(label((i+1)+"",16,MUTED,false),new LinearLayout.LayoutParams(dp(this,30),-2));TextView title=label(t.title,18,INK,false);title.setMaxLines(2);row.addView(title,new LinearLayout.LayoutParams(0,-2,1));row.addView(textAction("↑",()->moveOrder(index,-1)));row.addView(textAction("↓",()->moveOrder(index,1)));Icon handle=new Icon(this,"drag",MUTED);row.addView(handle,new LinearLayout.LayoutParams(dp(this,28),dp(this,36)));row.setOnLongClickListener(v->{v.startDragAndDrop(ClipData.newPlainText("task",id),new View.DragShadowBuilder(v),id,0);return true;});row.setOnDragListener((v,e)->{if(e.getAction()==DragEvent.ACTION_DRAG_STARTED)return e.getLocalState() instanceof String;if(e.getAction()==DragEvent.ACTION_DROP){String from=(String)e.getLocalState();int old=reorderIds.indexOf(from);if(old>=0&&old!=index){reorderIds.remove(old);reorderIds.add(index,from);reordered=true;render();}return true;}return true;});body.addView(row,new LinearLayout.LayoutParams(-1,-2));gap(body,10);}}
+    private void moveOrder(int index,int delta){int to=index+delta;if(to<0||to>=reorderIds.size())return;Collections.swap(reorderIds,index,to);reordered=true;render();}
 
-    private void buildTabs() {
-        View divider = new View(this); divider.setBackgroundColor(LINE); root.addView(divider, new LinearLayout.LayoutParams(-1,dp(1)));
-        tabs = row(); tabs.setBackgroundColor(PAPER); tabs.setPadding(dp(10),dp(6),dp(10),dp(6));
-        String[] names = {"今日", "统计", "设置"}; String[] glyphs = {"◷", "▥", "⚙"};
-        for (int i=0;i<3;i++) {
-            final int target=i;
-            LinearLayout cell = column(); cell.setGravity(Gravity.CENTER); cell.setPadding(dp(4),dp(7),dp(4),dp(7));
-            cell.setMinimumHeight(dp(58)); cell.setClickable(true); cell.setFocusable(true);
-            cell.setContentDescription(names[i] + (i==selectedTab ? "，已选中" : "，切换页面"));
-            cell.setBackground(shape(i==selectedTab?PALE:PAPER,16));
-            cell.addView(label(glyphs[i],21,i==selectedTab?JADE:MUTED,false));
-            cell.addView(label(names[i],12,i==selectedTab?JADE:MUTED,i==selectedTab));
-            cell.setOnClickListener(v -> switchTab(target));
-            tabs.addView(cell,new LinearLayout.LayoutParams(0,-2,1));
-        }
-        root.addView(tabs,new LinearLayout.LayoutParams(-1,-2));
-    }
-    private void switchTab(int tab) {
-        if (scroll != null) scrollPositions[selectedTab]=scroll.getScrollY();
-        selectedTab=tab; render(false);
-    }
-
-    private void renderToday() {
-        body.addView(label("今天，你把注意力投向了哪里？",25,INK,true)); gap(body,7);
-        body.addView(label("记录每一份注意力，投资你想成为的人。",13,MUTED,false)); gap(body,18);
-        addDateNavigation(false);
-        DayStats today = aggregate(selectedDate,selectedDate);
-        LinearLayout summary = card(Color.WHITE);
-        summary.addView(label(selectedDate.equals(LocalDate.now())?"今天 · 已记录":"当天 · 已记录",12,MUTED,false)); gap(summary,9);
-        LinearLayout numbers=row(); numbers.setGravity(Gravity.CENTER_VERTICAL);
-        TextView total=label(duration(today.total),32,INK,true); numbers.addView(total,new LinearLayout.LayoutParams(0,-2,1));
-        LinearLayout count=column(); count.setGravity(Gravity.END); count.addView(label(String.valueOf(today.count),26,JADE,true)); count.addView(label("次专注",12,MUTED,false)); numbers.addView(count);
-        summary.addView(numbers); gap(summary,12);
-        summary.addView(label("只统计实际投入，暂停时间不计入。",12,MUTED,false)); addCard(summary);
-        if (!getPreferences(MODE_PRIVATE).getBoolean("introDismissed",false) && !coordinator.notificationsGranted()) {
-            LinearLayout intro=card(PALE);
-            intro.addView(label("让到点提醒更可靠",16,JADE,true)); gap(intro,6);
-            intro.addView(label("允许通知后，锁屏也能看到倒计时。你也可以稍后再设置。",13,INK,false)); gap(intro,10);
-            LinearLayout actions=row(); Button setup=button("设置提醒",true); setup.setOnClickListener(v->switchTab(2)); actions.addView(setup,new LinearLayout.LayoutParams(0,-2,1));
-            gapHorizontal(actions,8); Button later=button("稍后",false); later.setOnClickListener(v->{getPreferences(MODE_PRIVATE).edit().putBoolean("introDismissed",true).apply();render(true);}); actions.addView(later,new LinearLayout.LayoutParams(0,-2,1));intro.addView(actions);addCard(intro);
-        }
-        if (coordinator.engine().isActive()) addTimerCard();
-        LinearLayout heading=row(); heading.setGravity(Gravity.CENTER_VERTICAL); heading.addView(label("当天任务",20,INK,true),new LinearLayout.LayoutParams(0,-2,1));
-        Button add=button("＋ 添加",false); add.setContentDescription("添加专注任务"); add.setOnClickListener(v->showTaskDialog(null)); heading.addView(add); body.addView(heading); gap(body,10);
-        List<LedgerStore.Task> tasks=store.getTasks(selectedDate);
-        if (tasks.isEmpty()) {
-            LinearLayout empty=card(Color.WHITE); empty.addView(label("留一点时间给自己",19,INK,true)); gap(empty,8);
-            empty.addView(label("添加一个任务，再开始第一段专注。也可以创建每周重复的日常计划。",14,MUTED,false)); gap(empty,15);
-            Button first=button("添加我的任务",true); first.setOnClickListener(v->showTaskDialog(null)); empty.addView(first); addCard(empty);
-        } else for (LedgerStore.Task task:tasks) addTaskCard(task);
-        Button manage=button("查看全部任务",false); manage.setOnClickListener(v->showAllTasks()); body.addView(manage);
-        gap(body,8); body.addView(label("勾选表示你认为任务完成；倒计时结束不会自动勾选。",12,MUTED,false));
-    }
-
-    private void addDateNavigation(boolean stats) {
-        LinearLayout nav=row(); nav.setGravity(Gravity.CENTER_VERTICAL);
-        Button previous=button("‹",false); previous.setTextSize(25); previous.setContentDescription(stats&&weekView?"上一周":"前一天");
-        previous.setOnClickListener(v->{selectedDate=selectedDate.minusDays(stats&&weekView?7:1);scrollPositions[selectedTab]=0;render(false);});
-        nav.addView(previous,new LinearLayout.LayoutParams(dp(48),-2));
-        Button date=button(dateLabel(selectedDate),false); date.setContentDescription("选择日期，当前"+selectedDate);
-        date.setOnClickListener(v->new DatePickerDialog(this,(picker,y,m,d)->{selectedDate=LocalDate.of(y,m+1,d);scrollPositions[selectedTab]=0;render(false);},selectedDate.getYear(),selectedDate.getMonthValue()-1,selectedDate.getDayOfMonth()).show());
-        nav.addView(date,new LinearLayout.LayoutParams(0,-2,1));
-        Button next=button("›",false); next.setTextSize(25); next.setContentDescription(stats&&weekView?"下一周":"后一天");next.setOnClickListener(v->{selectedDate=selectedDate.plusDays(stats&&weekView?7:1);scrollPositions[selectedTab]=0;render(false);});nav.addView(next,new LinearLayout.LayoutParams(dp(48),-2));body.addView(nav);
-        if (!selectedDate.equals(LocalDate.now())) { Button now=button("回到今天",false);now.setOnClickListener(v->{selectedDate=LocalDate.now();render(true);});body.addView(now); }
-        gap(body,12);
-    }
-
-    private void addTaskCard(LedgerStore.Task task) {
-        LinearLayout taskCard=card(Color.WHITE);
-        LinearLayout titleRow=row(); titleRow.setGravity(Gravity.CENTER_VERTICAL);
-        CheckBox done=new CheckBox(this); done.setButtonTintList(android.content.res.ColorStateList.valueOf(JADE));done.setMinimumWidth(dp(48));done.setMinimumHeight(dp(48));done.setContentDescription("标记任务完成："+task.title);done.setChecked(store.taskDone(task.id,selectedDate));
-        done.setOnCheckedChangeListener((v,checked)->{store.setTaskDone(task.id,selectedDate,checked);render(true);});titleRow.addView(done,new LinearLayout.LayoutParams(dp(48),-2));
-        LinearLayout words=column();TextView title=label(task.title,17,INK,true); if(done.isChecked()) title.setPaintFlags(title.getPaintFlags()|Paint.STRIKE_THRU_TEXT_FLAG);words.addView(title);gap(words,4);
-        LedgerStore.Project project=store.getProject(task.projectId);words.addView(label(projectName(task.projectId)+"  ·  "+task.plannedMinutes+" 分钟",12,project==null?MUTED:project.color,false));titleRow.addView(words,new LinearLayout.LayoutParams(0,-2,1));
-        Button menu=button("⋯",false);menu.setTextSize(24);menu.setContentDescription("编辑或排序任务："+task.title);menu.setOnClickListener(v->taskMenu(task));titleRow.addView(menu,new LinearLayout.LayoutParams(dp(48),-2));taskCard.addView(titleRow);gap(taskCard,9);
-        LinearLayout controls=row();controls.setGravity(Gravity.CENTER_VERTICAL);TextView repeat=label(scheduleLabel(task),11,MUTED,false);controls.addView(repeat,new LinearLayout.LayoutParams(0,-2,1));
-        Button start=button("开始专注",true);start.setTextSize(13);start.setContentDescription("开始专注："+task.title);start.setOnClickListener(v->showDurationDialog(task));controls.addView(start);taskCard.addView(controls);addCard(taskCard);
-    }
-
-    private void addTimerCard() {
-        TimerEngine.State state=coordinator.engine().snapshot();if(state==null)return;
-        LinearLayout card=card(INK);TextView tag=label(state.paused?"已暂停":"正在专注",12,Color.rgb(171,208,184),true);card.addView(tag);gap(card,5);card.addView(label(state.taskTitle,20,PAPER,true));
-        FrameLayout dial=new FrameLayout(this);timerDial=new TimerDial(this);timerDial.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);dial.addView(timerDial,new FrameLayout.LayoutParams(-1,-1));
-        LinearLayout center=column();center.setGravity(Gravity.CENTER);timerClock=label("",40,PAPER,true);timerClock.setGravity(Gravity.CENTER);timerClock.setContentDescription("剩余时间");center.addView(timerClock);timerStatus=label("",12,Color.rgb(171,208,184),false);center.addView(timerStatus);dial.addView(center,new FrameLayout.LayoutParams(-1,-1));
-        LinearLayout.LayoutParams dialParams=new LinearLayout.LayoutParams(dp(210),dp(210));dialParams.gravity=Gravity.CENTER_HORIZONTAL;card.addView(dial,dialParams);
-        timerElapsed=label("",12,Color.rgb(200,217,205),false);timerElapsed.setGravity(Gravity.CENTER);card.addView(timerElapsed);gap(card,14);
-        LinearLayout controls=row();Button pause=button(state.paused?"继续专注":"暂停",true);pause.setOnClickListener(v->{try{if(coordinator.engine().isPaused())coordinator.resume();else coordinator.pause();render(true);}catch(RuntimeException ex){error(ex);}});controls.addView(pause,new LinearLayout.LayoutParams(0,-2,1));gapHorizontal(controls,10);
-        Button finish=button("结束并记录",false);finish.setBackground(shape(Color.rgb(48,68,63),14));finish.setTextColor(PAPER);finish.setOnClickListener(v->new AlertDialog.Builder(this).setTitle("结束这段专注？").setMessage("会记录已经投入的时间。任务完成状态仍由你勾选。").setNegativeButton("继续保留",null).setPositiveButton("结束并记录",(d,w)->{try{coordinator.finish();render(true);toast("本次实际投入已记录");}catch(RuntimeException ex){error(ex);}}).show());controls.addView(finish,new LinearLayout.LayoutParams(0,-2,1));card.addView(controls);gap(card,12);card.addView(label("暂停时不计时。离开应用后，计时仍会继续。",11,Color.rgb(200,217,205),false));if(!coordinator.warning().isEmpty()){gap(card,8);card.addView(label(coordinator.warning(),12,Color.rgb(232,206,150),false));}addCard(card);
-    }
-
-    private void updateTimer() {
-        if(timerClock==null)return;TimerEngine.State state=coordinator.engine().snapshot();if(state==null)return;
-        long remaining=Math.max(0,coordinator.remainingMs()),actual=Math.max(0,coordinator.actualMs());
-        timerClock.setText(countdown(remaining));timerClock.setContentDescription("剩余"+duration(remaining));
-        timerStatus.setText(state.paused?"暂停中 · 时间不会增加":"距离本段结束");timerElapsed.setText("已投入 "+duration(actual)+"  /  计划 "+duration(state.plannedMs));
-        if(timerDial!=null)timerDial.setProgress(state.plannedMs<=0?0:Math.min(1f,(float)actual/state.plannedMs));
-    }
-
-    private void showDurationDialog(LedgerStore.Task task) {
-        if(coordinator.engine().isActive()){toast("已有一段专注进行中，请先结束再开始新任务。");if(selectedTab!=0)switchTab(0);return;}
-        Bundle draft=takeDialogDraft("duration",task.id);LinearLayout form=dialogForm();form.addView(label(task.title,18,INK,true));gap(form,8);form.addView(label("至少 15 分钟，以 5 分钟递增；也可直接输入。",13,MUTED,false));gap(form,12);
-        LinearLayout row=row();row.setGravity(Gravity.CENTER_VERTICAL);Button minus=button("−5",false);EditText minutes=input("分钟",draft==null?String.valueOf(Math.max(15,task.plannedMinutes)):draft.getString("minutes"),InputType.TYPE_CLASS_NUMBER);minutes.setGravity(Gravity.CENTER);Button plus=button("＋5",false);row.addView(minus,new LinearLayout.LayoutParams(dp(64),-2));row.addView(minutes,new LinearLayout.LayoutParams(0,-2,1));row.addView(plus,new LinearLayout.LayoutParams(dp(64),-2));form.addView(row);
-        minus.setOnClickListener(v->{try{minutes.setText(String.valueOf(Math.max(15,Integer.parseInt(minutes.getText().toString())-5)));}catch(NumberFormatException ex){minutes.setText("15");}});plus.setOnClickListener(v->{try{long n=Long.parseLong(minutes.getText().toString());minutes.setText(String.valueOf(Math.min(2147483645L,n+5)));}catch(NumberFormatException ex){minutes.setText("25");}});
-        gap(form,12);LinearLayout presets=row();for(int p:new int[]{25,45,60}){Button b=button(p+" 分钟",false);b.setOnClickListener(v->minutes.setText(String.valueOf(p)));presets.addView(b,new LinearLayout.LayoutParams(0,-2,1));}form.addView(presets);gap(form,12);form.addView(label("计时结束只记录时间，不自动标记任务完成。",12,MUTED,false));
-        AlertDialog dialog=dialog("开始一段专注",form,"开始",()->{});dialog.setOnShowListener(v->{styleDialog(dialog);dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(btn->{int n;try{n=Integer.parseInt(minutes.getText().toString().trim());if(n<15||n%5!=0)throw new NumberFormatException();}catch(NumberFormatException ex){minutes.setError("请输入至少 15 的分钟数，且为 5 的倍数");return;}try{coordinator.start(task,n);dialog.dismiss();selectedDate=LocalDate.now();scrollPositions[0]=0;switchTab(0);}catch(RuntimeException ex){error(ex);}});});rememberDialog(dialog,"duration",task.id,()->{Bundle b=new Bundle();b.putString("minutes",minutes.getText().toString());return b;});dialog.show();
-    }
-
-    private void taskMenu(LedgerStore.Task task) {
-        new AlertDialog.Builder(this).setTitle(task.title).setItems(new String[]{"编辑任务","上移","下移","删除任务"},(d,i)->{if(i==0)showTaskDialog(task);else if(i==1||i==2){store.moveTask(task.id,i==1?-1:1);render(true);}else new AlertDialog.Builder(this).setTitle("删除任务？").setMessage("任务会从计划中移除，已有专注记录会保留。").setNegativeButton("取消",null).setPositiveButton("删除",(x,w)->{store.deleteTask(task.id);render(true);}).show();}).show();
-    }
-    private void showAllTasks() {
-        List<LedgerStore.Task> list=new ArrayList<>();for(LedgerStore.Task t:store.getAllTasks())if(!t.archived)list.add(t);
-        if(list.isEmpty()){showTaskDialog(null);return;}String[] names=new String[list.size()];for(int i=0;i<list.size();i++)names[i]=list.get(i).title+"\n"+scheduleLabel(list.get(i));new AlertDialog.Builder(this).setTitle("全部任务").setItems(names,(d,i)->taskMenu(list.get(i))).setNegativeButton("关闭",null).setPositiveButton("添加",(d,w)->showTaskDialog(null)).show();
-    }
-
-    private void showTaskDialog(LedgerStore.Task existing) {
-        List<LedgerStore.Project> projects=activeProjects();if(projects.isEmpty()){toast("先添加一个分类，再创建任务。");showProjectDialog(null);return;}
-        Bundle draft=takeDialogDraft("task",existing==null?null:existing.id);LinearLayout form=dialogForm();EditText title=input("任务名称",draft!=null?draft.getString("title"):existing==null?"":existing.title,InputType.TYPE_CLASS_TEXT|InputType.TYPE_TEXT_FLAG_CAP_SENTENCES);form.addView(fieldLabel("任务"));form.addView(title);gap(form,14);
-        form.addView(fieldLabel("所属分类"));Spinner project=projectSpinner(projects,draft!=null?draft.getString("project"):existing==null?null:existing.projectId);form.addView(project);gap(form,14);form.addView(fieldLabel("默认时长（分钟）"));EditText minutes=input("至少 15 分钟",draft!=null?draft.getString("minutes"):String.valueOf(existing==null?25:existing.plannedMinutes),InputType.TYPE_CLASS_NUMBER);form.addView(minutes);gap(form,14);
-        RadioGroup mode=new RadioGroup(this);mode.setOrientation(LinearLayout.HORIZONTAL);RadioButton once=new RadioButton(this);once.setId(View.generateViewId());once.setText("一次性");once.setTextColor(INK);once.setMinHeight(dp(48));RadioButton repeated=new RadioButton(this);repeated.setId(View.generateViewId());repeated.setText("每周重复");repeated.setTextColor(INK);repeated.setMinHeight(dp(48));mode.addView(once,new RadioGroup.LayoutParams(0,-2,1));mode.addView(repeated,new RadioGroup.LayoutParams(0,-2,1));form.addView(mode);
-        LinearLayout dateRow=row();EditText date=input("yyyy-MM-dd",draft!=null?draft.getString("date"):existing!=null&&existing.oneOffDate!=null?existing.oneOffDate:selectedDate.toString(),InputType.TYPE_CLASS_DATETIME|InputType.TYPE_DATETIME_VARIATION_DATE);dateRow.addView(date,new LinearLayout.LayoutParams(0,-2,1));Button choose=button("选日期",false);choose.setOnClickListener(v->pickDate(date));dateRow.addView(choose);form.addView(dateRow);
-        LinearLayout weekdayForm=column();CheckBox[] days=new CheckBox[7];String[] dayNames={"周一","周二","周三","周四","周五","周六","周日"};for(int group=0;group<2;group++){LinearLayout r=row();int from=group*4,to=Math.min(7,from+4);for(int i=from;i<to;i++){days[i]=new CheckBox(this);days[i].setText(dayNames[i]);days[i].setTextSize(12);days[i].setTextColor(INK);days[i].setMinHeight(dp(48));days[i].setButtonTintList(android.content.res.ColorStateList.valueOf(JADE));days[i].setChecked(draft!=null?(draft.getInt("mask")&(1<<i))!=0:existing!=null?(existing.weekMask&(1<<i))!=0:i<5);r.addView(days[i],new LinearLayout.LayoutParams(0,-2,1));}weekdayForm.addView(r);}form.addView(weekdayForm);
-        mode.setOnCheckedChangeListener((g,id)->{dateRow.setVisibility(id==once.getId()?View.VISIBLE:View.GONE);weekdayForm.setVisibility(id==repeated.getId()?View.VISIBLE:View.GONE);});mode.check((draft!=null?draft.getBoolean("repeat"):existing!=null&&existing.oneOffDate==null)?repeated.getId():once.getId());gap(form,8);form.addView(label("任务按你安排的顺序显示，可在任务菜单中上移、下移。",12,MUTED,false));
-        AlertDialog dialog=dialog(existing==null?"添加任务":"编辑任务",form,"保存",()->{});dialog.setOnShowListener(v->{styleDialog(dialog);dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(btn->{String value=title.getText().toString().trim();if(value.isEmpty()){title.setError("给任务起个名字");return;}int n;try{n=Integer.parseInt(minutes.getText().toString().trim());if(n<15||n%5!=0)throw new NumberFormatException();}catch(NumberFormatException ex){minutes.setError("请输入至少 15 的分钟数，且为 5 的倍数");return;}String dateString=null;int mask=0;if(mode.getCheckedRadioButtonId()==once.getId()){try{dateString=LocalDate.parse(date.getText().toString().trim(),DATE).toString();}catch(RuntimeException ex){date.setError("日期格式为 yyyy-MM-dd，例如 2026-10-03");return;}}else{for(int i=0;i<7;i++)if(days[i].isChecked())mask|=1<<i;if(mask==0){toast("至少选择一个重复的星期");return;}}LedgerStore.Task task=new LedgerStore.Task();task.id=existing==null?UUID.randomUUID().toString():existing.id;task.title=value;task.projectId=projects.get(project.getSelectedItemPosition()).id;task.plannedMinutes=n;task.sort=existing==null?store.getAllTasks().size():existing.sort;task.weekMask=mask;task.oneOffDate=dateString;task.archived=false;try{store.saveTask(task);dialog.dismiss();render(true);}catch(RuntimeException ex){error(ex);}});});rememberDialog(dialog,"task",existing==null?null:existing.id,()->{Bundle b=new Bundle();b.putString("title",title.getText().toString());b.putString("project",projects.get(project.getSelectedItemPosition()).id);b.putString("minutes",minutes.getText().toString());b.putString("date",date.getText().toString());b.putBoolean("repeat",mode.getCheckedRadioButtonId()==repeated.getId());int mask=0;for(int i=0;i<7;i++)if(days[i].isChecked())mask|=1<<i;b.putInt("mask",mask);return b;});dialog.show();
-    }
-
-    private void renderStatistics() {
-        body.addView(label("每一段投入，都有迹可循",25,INK,true));gap(body,8);body.addView(label("用真实时长，看见时间的去向。",13,MUTED,false));gap(body,18);
-        LinearLayout period=row();Button day=button("当天",!weekView),week=button("本周",weekView);day.setOnClickListener(v->{weekView=false;render(true);});week.setOnClickListener(v->{weekView=true;render(true);});period.addView(day,new LinearLayout.LayoutParams(0,-2,1));gapHorizontal(period,8);period.addView(week,new LinearLayout.LayoutParams(0,-2,1));body.addView(period);gap(body,8);addDateNavigation(true);
-        LocalDate from=weekView?selectedDate.with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY)):selectedDate,to=weekView?from.plusDays(6):selectedDate;
-        DayStats stats=aggregate(from,to);LinearLayout summary=card(INK);summary.addView(label(weekView?from+" 至 "+to:dateLabel(from),12,Color.rgb(186,212,193),false));gap(summary,12);summary.addView(label(duration(stats.total),36,PAPER,true));gap(summary,8);summary.addView(label("实际投入  ·  "+stats.count+" 次专注",13,Color.rgb(200,217,205),false));if(coordinator.engine().isActive()){gap(summary,10);summary.addView(label("进行中的一段，结束后计入统计。",11,Color.rgb(200,217,205),false));}addCard(summary);
-        LinearLayout categories=card(Color.WHITE);categories.addView(label("分类投入",19,INK,true));gap(categories,16);
-        if(stats.total==0)categories.addView(label("还没有已记录的时间。开始一段专注，或补记一次投入。",14,MUTED,false));else for(Map.Entry<String,Long> entry:stats.byProject.entrySet()){
-            LedgerStore.Project project=store.getProject(entry.getKey());int color=project==null?JADE:project.color;float share=(float)entry.getValue()/stats.total;
-            LinearLayout line=row();line.setGravity(Gravity.CENTER_VERTICAL);TextView name=label(projectName(entry.getKey()),14,INK,true);line.addView(name,new LinearLayout.LayoutParams(0,-2,1));line.addView(label(duration(entry.getValue())+"  ·  "+Math.round(100*share)+"%",12,MUTED,false));categories.addView(line);gap(categories,7);
-            LinearLayout track=row();track.setBackground(shape(PALE,4));View fill=new View(this);fill.setBackground(shape(color,4));track.addView(fill,new LinearLayout.LayoutParams(0,dp(8),Math.max(0.001f,share)));View rest=new View(this);track.addView(rest,new LinearLayout.LayoutParams(0,dp(8),Math.max(0.001f,1-share)));track.setContentDescription(projectName(entry.getKey())+"，"+duration(entry.getValue())+"，占比"+Math.round(100*share)+"% ");categories.addView(track);gap(categories,17);
-        }addCard(categories);
-        LinearLayout actions=row();Button add=button("＋ 补记专注",true);add.setOnClickListener(v->showSessionDialog(null));actions.addView(add,new LinearLayout.LayoutParams(0,-2,1));gapHorizontal(actions,8);Button copy=button("复制当天 Markdown",false);copy.setTextSize(12);copy.setOnClickListener(v->copyDaily());actions.addView(copy,new LinearLayout.LayoutParams(0,-2,1));body.addView(actions);gap(body,22);
-        body.addView(label("专注明细",20,INK,true));gap(body,8);body.addView(label("点击记录可修改或删除。跨午夜的投入按记录时区拆到各日。",12,MUTED,false));gap(body,12);
-        if(stats.sessions.isEmpty()){LinearLayout empty=card(Color.WHITE);empty.addView(label("这一页，等待你的投入",17,INK,true));gap(empty,8);empty.addView(label("不需要补上漂亮数字，只记下真正发生的时间。",13,MUTED,false));addCard(empty);}else for(Session session:stats.sessions)addSessionCard(session,stats.sessionTotals.get(session.id));
-    }
-
-    private DayStats aggregate(LocalDate from,LocalDate to) {
-        DayStats result=new DayStats();for(Session session:store.getSessions()){long total=0;for(Map.Entry<LocalDate,Long> e:DailyTotals.totalsByDay(session).entrySet())if(!e.getKey().isBefore(from)&&!e.getKey().isAfter(to))total+=e.getValue();boolean zeroInPeriod=session.actualMs==0&&!Instant.ofEpochMilli(session.startedWallMs).atZone(safeZone(session.zoneId)).toLocalDate().isBefore(from)&&!Instant.ofEpochMilli(session.startedWallMs).atZone(safeZone(session.zoneId)).toLocalDate().isAfter(to);if(total<=0&&!zeroInPeriod)continue;result.total+=total;result.count++;result.sessions.add(session);result.sessionTotals.put(session.id,total);Long old=result.byProject.get(session.projectId);result.byProject.put(session.projectId,(old==null?0:old)+total);}return result;
-    }
-    private static final class DayStats { long total;int count;final Map<String,Long> byProject=new LinkedHashMap<>(),sessionTotals=new LinkedHashMap<>();final List<Session> sessions=new ArrayList<>(); }
-
-    private void addSessionCard(Session session,Long inPeriod) {
-        LinearLayout card=card(Color.WHITE);LinearLayout top=row();top.setGravity(Gravity.TOP);LinearLayout words=column();words.addView(label(session.taskTitle,16,INK,true));gap(words,4);words.addView(label(projectName(session.projectId),12,MUTED,false));top.addView(words,new LinearLayout.LayoutParams(0,-2,1));top.addView(label(duration(inPeriod==null?session.actualMs:inPeriod),16,JADE,true));card.addView(top);gap(card,10);
-        ZoneId zone=safeZone(session.zoneId);LocalDateTime start=Instant.ofEpochMilli(session.startedWallMs).atZone(zone).toLocalDateTime(),end=Instant.ofEpochMilli(session.endedWallMs).atZone(zone).toLocalDateTime();String range=start.toLocalDate()+"  "+start.toLocalTime().format(CLOCK)+"–"+(start.toLocalDate().equals(end.toLocalDate())?"":end.toLocalDate()+" ")+end.toLocalTime().format(CLOCK);card.addView(label(range,12,MUTED,false));gap(card,6);
-        String flags=session.manual?"手动补记":"倒计时记录";if(session.edited)flags+=" · 已修改";flags+=" · "+reasonLabel(session.reason);card.addView(label(flags,11,MUTED,false));card.setClickable(true);card.setFocusable(true);card.setContentDescription(session.taskTitle+"，"+duration(session.actualMs)+"，"+range+"，"+flags+"，点击编辑记录");card.setOnClickListener(v->showSessionMenu(session));addCard(card);
-    }
-    private void showSessionMenu(Session session) {new AlertDialog.Builder(this).setTitle(session.taskTitle).setItems(new String[]{"修改这条记录","删除这条记录"},(d,i)->{if(i==0)showSessionDialog(session);else new AlertDialog.Builder(this).setTitle("删除专注记录？").setMessage("这条时间记录将从统计中移除。此操作无法撤销。").setNegativeButton("取消",null).setPositiveButton("删除",(x,w)->{store.deleteSession(session.id);render(true);}).show();}).show();}
-
-    private void showSessionDialog(Session original) {
-        List<LedgerStore.Project> projects=activeProjects();
-        if(original!=null){LedgerStore.Project old=store.getProject(original.projectId);if(old!=null&&old.archived)projects.add(old);}
-        if(projects.isEmpty()){toast("请先添加分类。");showProjectDialog(null);return;}ZoneId zone=original==null?ZoneId.systemDefault():safeZone(original.zoneId);LocalDateTime initial=original==null?LocalDateTime.of(selectedDate,LocalTime.now().withSecond(0).withNano(0)):Instant.ofEpochMilli(original.startedWallMs).atZone(zone).toLocalDateTime();
-        Bundle draft=takeDialogDraft("session",original==null?null:original.id);LinearLayout form=dialogForm();form.addView(fieldLabel("这段时间做了什么"));EditText title=input("专注事项",draft!=null?draft.getString("title"):original==null?"":original.taskTitle,InputType.TYPE_CLASS_TEXT);form.addView(title);gap(form,14);form.addView(fieldLabel("分类"));Spinner project=projectSpinner(projects,draft!=null?draft.getString("project"):original==null?null:original.projectId);form.addView(project);gap(form,14);
-        form.addView(fieldLabel("开始日期"));LinearLayout dateRow=row();EditText date=input("yyyy-MM-dd",draft!=null?draft.getString("date"):initial.toLocalDate().toString(),InputType.TYPE_CLASS_DATETIME|InputType.TYPE_DATETIME_VARIATION_DATE);dateRow.addView(date,new LinearLayout.LayoutParams(0,-2,1));Button chooseDate=button("选日期",false);chooseDate.setOnClickListener(v->pickDate(date));dateRow.addView(chooseDate);form.addView(dateRow);gap(form,14);
-        form.addView(fieldLabel("开始时间（24 小时制）"));LinearLayout timeRow=row();EditText time=input("HH:mm 或 HH:mm:ss",draft!=null?draft.getString("time"):initial.toLocalTime().format(INPUT_CLOCK),InputType.TYPE_CLASS_DATETIME|InputType.TYPE_DATETIME_VARIATION_TIME);timeRow.addView(time,new LinearLayout.LayoutParams(0,-2,1));Button chooseTime=button("选时间",false);chooseTime.setOnClickListener(v->{LocalTime value;try{value=LocalTime.parse(time.getText().toString(),INPUT_CLOCK);}catch(RuntimeException ex){value=LocalTime.now();}new TimePickerDialog(this,(p,h,m)->time.setText(String.format(Locale.ROOT,"%02d:%02d",h,m)),value.getHour(),value.getMinute(),true).show();});timeRow.addView(chooseTime);form.addView(timeRow);gap(form,14);
-        form.addView(fieldLabel("实际投入时长（分钟，可用小数）"));String initialMinutes=original==null?"25":String.format(Locale.ROOT,"%.6f",original.actualMs/60000d).replaceAll("0+$","").replaceAll("\\.$","");EditText minutes=input("例如 20 或 20.5",draft!=null?draft.getString("minutes"):initialMinutes,InputType.TYPE_CLASS_NUMBER|InputType.TYPE_NUMBER_FLAG_DECIMAL);form.addView(minutes);gap(form,14);
-        form.addView(label("记录时区："+zone.getId()+"。补记不受倒计时的 15 分钟限制。",12,MUTED,false));gap(form,8);form.addView(label(original==null?"记录不能与已有实际投入重叠。若正在计时，请先结束这一段再补记。":"修改时间或时长会整理为一段连续投入；只改名称或分类会保留暂停分段。修改后会标记“已修改”。",12,AMBER,false));
-        AlertDialog dialog=dialog(original==null?"补记一段专注":"修改专注记录",form,"保存",()->{});dialog.setOnShowListener(v->{styleDialog(dialog);dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(btn->{String value=title.getText().toString().trim();if(value.isEmpty()){title.setError("请填写专注事项");return;}LocalDate d;LocalTime t;try{d=LocalDate.parse(date.getText().toString().trim(),DATE);}catch(RuntimeException ex){date.setError("请输入有效日期，格式 yyyy-MM-dd");return;}try{t=LocalTime.parse(time.getText().toString().trim(),INPUT_CLOCK);}catch(RuntimeException ex){time.setError("请输入有效时间，格式 HH:mm 或 HH:mm:ss");return;}long ms;try{if(original!=null&&minutes.getText().toString().trim().equals(initialMinutes)){ms=original.actualMs;}else{double n=Double.parseDouble(minutes.getText().toString().trim());if(!Double.isFinite(n)||n<=0||n>10080)throw new NumberFormatException();ms=Math.round(n*60000);if(ms<1000)throw new NumberFormatException();}}catch(NumberFormatException ex){minutes.setError("请输入大于 0 的分钟数，最短 1 秒，最长 7 天");return;}LocalDateTime local=LocalDateTime.of(d,t);if(zone.getRules().getValidOffsets(local).isEmpty()){time.setError("这个时间在所选时区不存在，请调整时间");return;}boolean unchangedStart=original!=null&&date.getText().toString().trim().equals(initial.toLocalDate().toString())&&time.getText().toString().trim().equals(initial.toLocalTime().format(INPUT_CLOCK));long start=unchangedStart?original.startedWallMs:local.atZone(zone).toInstant().toEpochMilli();if((original==null||start!=original.startedWallMs||ms!=original.actualMs)&&(start>System.currentTimeMillis()||start+ms>System.currentTimeMillis()+1000)){minutes.setError("只能记录已经发生的实际投入");return;}
-                try{String id=original==null?UUID.randomUUID().toString():original.id;Session manual=Session.manual(id,original==null?"manual-"+id:original.taskId,value,projects.get(project.getSelectedItemPosition()).id,start,ms,zone.getId(),original!=null);boolean unchangedInterval=original!=null&&start==original.startedWallMs&&ms==original.actualMs;Session session=original==null?manual:new Session(manual.id,original.taskId,value,manual.projectId,original.plannedMs,manual.actualMs,manual.startedWallMs,unchangedInterval?original.endedWallMs:manual.endedWallMs,unchangedInterval?original.segments:manual.segments,original.reason,original.manual,true,zone.getId());if(overlapsActive(start,start+ms)){minutes.setError("请先结束正在进行或暂停的专注，再补记或修改记录");return;}if(original==null)store.addManualSession(session);else store.saveEditedSession(session);dialog.dismiss();render(true);toast(original==null?"补记已保存":"修改已保存");}catch(RuntimeException ex){minutes.setError(ex.getMessage()==null?"记录未保存，请检查时间是否重叠":ex.getMessage());}});});rememberDialog(dialog,"session",original==null?null:original.id,()->{Bundle b=new Bundle();b.putString("title",title.getText().toString());b.putString("project",projects.get(project.getSelectedItemPosition()).id);b.putString("date",date.getText().toString());b.putString("time",time.getText().toString());b.putString("minutes",minutes.getText().toString());return b;});dialog.show();
-    }
-    private boolean overlapsActive(long start,long end) {
-        TimerEngine.State state=coordinator.engine().snapshot();if(state==null||state.sessionId==null)return false;
-        // Store conservatively excludes all edits while an unfinished record exists.
-        return true;
-    }
-
-    private void renderSettings() {
-        body.addView(label("按你的节奏来",25,INK,true));gap(body,8);body.addView(label("分类、提醒和你的数据，都在这里。",13,MUTED,false));gap(body,22);
-        LinearLayout projectCard=card(Color.WHITE);LinearLayout projectHeading=row();projectHeading.setGravity(Gravity.CENTER_VERTICAL);projectHeading.addView(label("项目与分类",19,INK,true),new LinearLayout.LayoutParams(0,-2,1));Button add=button("＋ 新建",false);add.setOnClickListener(v->showProjectDialog(null));projectHeading.addView(add);projectCard.addView(projectHeading);gap(projectCard,8);
-        List<LedgerStore.Project> projects=activeProjects();for(LedgerStore.Project project:projects){Button b=button("●  "+project.name+"    编辑",false);b.setTextColor(project.color);b.setGravity(Gravity.START|Gravity.CENTER_VERTICAL);b.setContentDescription("编辑分类"+project.name);b.setOnClickListener(v->showProjectDialog(project));projectCard.addView(b);}projectCard.addView(label("可以改名、换颜色或归档。历史记录会保留。",12,MUTED,false));addCard(projectCard);
-        LinearLayout permissions=card(Color.WHITE);permissions.addView(label("专注提醒",19,INK,true));gap(permissions,12);
-        permissions.addView(label("通知权限  ·  "+(coordinator.notificationsGranted()?"已允许":"尚未允许"),14,INK,true));gap(permissions,6);permissions.addView(label("在锁屏显示计时状态，并在到点时提醒。关闭通知不影响本地记录。",12,MUTED,false));gap(permissions,8);Button notify=button(coordinator.notificationsGranted()?"管理通知":"允许通知提醒",false);notify.setOnClickListener(v->notificationSettings());permissions.addView(notify);gap(permissions,16);
-        permissions.addView(label("准时提醒  ·  "+(coordinator.exactAlarmGranted()?"已允许":"可选"),14,INK,true));gap(permissions,6);permissions.addView(label("允许“闹钟和提醒”可提高息屏到点提醒的准时性。系统仍可能延迟提醒；记录按实际计时计算。",12,MUTED,false));gap(permissions,8);Button alarms=button("设置闹钟与提醒权限",false);alarms.setOnClickListener(v->{if(Build.VERSION.SDK_INT>=31){try{startActivity(new Intent(Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM,Uri.parse("package:"+getPackageName())));}catch(RuntimeException ex){startActivity(new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS,Uri.parse("package:"+getPackageName())));}}else toast("当前 Android 版本无需额外授予此权限");});permissions.addView(alarms);addCard(permissions);
-        LinearLayout reliability=card(PALE);reliability.addView(label("息屏与后台运行",17,JADE,true));gap(reliability,8);reliability.addView(label("realme 等机型可能限制后台活动。可在系统应用管理中允许后台运行，避免“清理后台”。若提醒被延迟，重新打开应用会按保存的计时恢复。",13,INK,false));gap(reliability,10);reliability.addView(label("强行停止应用会中断提醒；设备重启会结束未完成的一段，保留已保存的有效投入。系统权限无法保证所有机型提醒完全准时。",12,MUTED,false));gap(reliability,12);Button battery=button("打开系统电池设置",false);battery.setOnClickListener(v->{try{startActivity(new Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS));}catch(RuntimeException ex){startActivity(new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS,Uri.parse("package:"+getPackageName())));}});reliability.addView(battery);addCard(reliability);
-        LinearLayout data=card(Color.WHITE);data.addView(label("数据与你",19,INK,true));gap(data,8);data.addView(label("所有任务与时间记录保存在这台设备上。无账号、无广告、无统计 SDK，不读取其他应用的使用行为。",13,MUTED,false));gap(data,12);
-        Button copy=button("复制 "+selectedDate+" 的 Markdown",false);copy.setOnClickListener(v->copyDaily());data.addView(copy);Button csv=button("导出全部专注 CSV",false);csv.setOnClickListener(v->export("csv"));data.addView(csv);Button backup=button("导出完整 JSON 备份",false);backup.setOnClickListener(v->export("json"));data.addView(backup);gap(data,8);data.addView(label("导出到你选择的位置。卸载会清除本地数据，建议定期保留备份。本版本的 JSON 用于数据留存，不提供自动导入。",12,AMBER,false));addCard(data);
-        LinearLayout attribution=card(Color.WHITE);attribution.addView(label("时间归属规则",16,INK,true));gap(attribution,8);attribution.addView(label("每段专注记住开始时的时区，跨午夜会拆分到对应日期。修改系统时区不会重写历史；实际时长以计时记录为准，暂停不计入。",13,MUTED,false));gap(attribution,8);attribution.addView(label("当前设备时区："+ZoneId.systemDefault().getId(),12,MUTED,false));addCard(attribution);TextView footer=label("时本 · 本地原生版\n记录每一份注意力，投资你想成为的人。",12,MUTED,false);footer.setGravity(Gravity.CENTER);body.addView(footer);
-    }
-
-    private void showProjectDialog(LedgerStore.Project original) {
-        Bundle draft=takeDialogDraft("project",original==null?null:original.id);LinearLayout form=dialogForm();form.addView(fieldLabel("分类名称"));EditText name=input("例如：工作、运动、创作",draft!=null?draft.getString("name"):original==null?"":original.name,InputType.TYPE_CLASS_TEXT);form.addView(name);gap(form,16);form.addView(fieldLabel("分类颜色"));int[] colors={JADE,Color.rgb(63,103,141),Color.rgb(140,91,111),Color.rgb(152,105,53),Color.rgb(96,93,141),Color.rgb(99,119,55)};final int[] selected={draft!=null?draft.getInt("color"):original==null?JADE:original.color};LinearLayout palette=column();List<Button> choices=new ArrayList<>();for(int line=0;line<2;line++){LinearLayout r=row();for(int index=line*3;index<line*3+3;index++){final int color=colors[index];Button b=button("●",false);b.setTextColor(color);b.setTextSize(25);b.setContentDescription("分类颜色 "+(index+1));b.setBackground(shape(selected[0]==color?PALE:PAPER,14));choices.add(b);b.setOnClickListener(v->{selected[0]=color;for(int k=0;k<choices.size();k++)choices.get(k).setBackground(shape(colors[k]==color?PALE:PAPER,14));});r.addView(b,new LinearLayout.LayoutParams(0,-2,1));}palette.addView(r);}form.addView(palette);
-        AlertDialog dialog=new AlertDialog.Builder(this).setTitle(original==null?"新建分类":"编辑分类").setView(wrapForm(form)).setNegativeButton("取消",null).setPositiveButton("保存",null).create();if(original!=null)dialog.setButton(AlertDialog.BUTTON_NEUTRAL,"归档",(d,w)->new AlertDialog.Builder(this).setTitle("归档“"+original.name+"”？").setMessage("历史记录保留；此分类下的任务也会一起归档，不再显示在当天计划中。").setNegativeButton("取消",null).setPositiveButton("归档",(x,y)->{store.archiveProject(original.id);render(true);}).show());dialog.setOnShowListener(v->{styleDialog(dialog);dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(btn->{String value=name.getText().toString().trim();if(value.isEmpty()){name.setError("请填写分类名称");return;}try{if(original==null)store.addProject(value,selected[0]);else{original.name=value;original.color=selected[0];store.updateProject(original);}dialog.dismiss();render(true);}catch(RuntimeException ex){name.setError(ex.getMessage());}});});rememberDialog(dialog,"project",original==null?null:original.id,()->{Bundle b=new Bundle();b.putString("name",name.getText().toString());b.putInt("color",selected[0]);return b;});dialog.show();
-    }
-
-    private void notificationSettings() {
-        if(Build.VERSION.SDK_INT>=33&&checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)!=PackageManager.PERMISSION_GRANTED){requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS},REQUEST_NOTIFICATIONS);return;}
-        Intent intent=new Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS);intent.putExtra(Settings.EXTRA_APP_PACKAGE,getPackageName());try{startActivity(intent);}catch(RuntimeException ex){startActivity(new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS,Uri.parse("package:"+getPackageName())));}
-    }
-    @Override public void onRequestPermissionsResult(int request,String[] permissions,int[] grants){super.onRequestPermissionsResult(request,permissions,grants);if(request==REQUEST_NOTIFICATIONS){render(true);toast(coordinator.notificationsGranted()?"通知提醒已允许":"仍可计时与记录；通知可稍后在设置中开启。");}}
-    private void copyDaily(){ClipboardManager clipboard=(ClipboardManager)getSystemService(CLIPBOARD_SERVICE);clipboard.setPrimaryClip(ClipData.newPlainText("时本 "+selectedDate,Reports.dailyMarkdown(store,selectedDate)));toast("已复制 "+selectedDate+" 的 Markdown");}
-    private void export(String kind){try{pendingExportKind=kind;pendingExport="csv".equals(kind)?"\uFEFF"+Reports.csv(store):Reports.backupJson(store);Intent intent=new Intent(Intent.ACTION_CREATE_DOCUMENT);intent.addCategory(Intent.CATEGORY_OPENABLE);intent.setType("csv".equals(kind)?"text/csv":"application/json");intent.putExtra(Intent.EXTRA_TITLE,"时本-"+LocalDate.now()+"."+kind);startActivityForResult(intent,REQUEST_EXPORT);}catch(RuntimeException ex){pendingExport=null;pendingExportKind=null;toast("无法打开保存位置，请检查系统文件应用。");}}
-    @Override protected void onActivityResult(int request,int result,Intent data){super.onActivityResult(request,result,data);if(request==REQUEST_EXPORT){if(pendingExport==null&&pendingExportKind!=null)pendingExport="csv".equals(pendingExportKind)?"\uFEFF"+Reports.csv(store):Reports.backupJson(store);if(result==RESULT_OK&&data!=null&&data.getData()!=null&&pendingExport!=null){try(OutputStream out=getContentResolver().openOutputStream(data.getData(),"wt")){if(out==null)throw new java.io.IOException("没有可写入的文件");out.write(pendingExport.getBytes(StandardCharsets.UTF_8));out.flush();toast("文件已导出");}catch(Exception ex){toast("导出失败："+(ex.getMessage()==null?"无法写入文件":ex.getMessage()));}}pendingExport=null;pendingExportKind=null;}}
-
-    private void rememberDialog(AlertDialog dialog,String kind,String id,java.util.function.Supplier<Bundle> draft) {
-        editingDialog=dialog;editingKind=kind;editingId=id;editingDraft=draft;
-        dialog.setOnDismissListener(d->{if(editingDialog==dialog){editingDialog=null;editingKind=null;editingId=null;editingDraft=null;}});
-    }
-    private Bundle takeDialogDraft(String kind,String id){if(same(kind,pendingDialogKind)&&same(id,pendingDialogId)){Bundle result=pendingDialogDraft;pendingDialogDraft=null;pendingDialogKind=null;pendingDialogId=null;return result;}return null;}
-    private void restoreDialog(){
-        String kind=pendingDialogKind,id=pendingDialogId;
-        if("task".equals(kind)||"duration".equals(kind)){LedgerStore.Task task=id==null?null:store.getTask(id);if("duration".equals(kind)){if(task!=null&&!coordinator.engine().isActive())showDurationDialog(task);}else showTaskDialog(task);}
-        else if("project".equals(kind))showProjectDialog(id==null?null:store.getProject(id));
-        else if("session".equals(kind)){Session record=null;for(Session s:store.getSessions())if(same(id,s.id)){record=s;break;}showSessionDialog(record);}
-        pendingDialogKind=null;pendingDialogId=null;pendingDialogDraft=null;
-    }
-
-    private List<LedgerStore.Project> activeProjects(){List<LedgerStore.Project> result=new ArrayList<>();for(LedgerStore.Project p:store.getProjects())if(!p.archived)result.add(p);return result;}
-    private Spinner projectSpinner(List<LedgerStore.Project> projects,String selected){Spinner spinner=new Spinner(this);spinner.setMinimumHeight(dp(52));String[] names=new String[projects.size()];int index=0;for(int i=0;i<projects.size();i++){names[i]=projects.get(i).name;if(same(projects.get(i).id,selected))index=i;}ArrayAdapter<String> adapter=new ArrayAdapter<>(this,android.R.layout.simple_spinner_dropdown_item,names);spinner.setAdapter(adapter);spinner.setSelection(index);spinner.setContentDescription("选择所属分类");return spinner;}
-    private String projectName(String id){LedgerStore.Project project=store.getProject(id);return project==null?"未分类":project.name+(project.archived?"（已归档）":"");}
-    private String scheduleLabel(LedgerStore.Task task){if(task.oneOffDate!=null)return "一次性 · "+task.oneOffDate;String[] names={"一","二","三","四","五","六","日"};StringBuilder b=new StringBuilder("每周 ");for(int i=0;i<7;i++)if((task.weekMask&(1<<i))!=0){if(b.length()>3)b.append("、");b.append(names[i]);}return b.toString();}
-    private String reasonLabel(String reason){if("expired".equals(reason))return "到点结束";if("early_end".equals(reason))return "主动结束";if("interrupted_restart".equals(reason))return "重启恢复";if("manual".equals(reason))return "手动录入";return "已记录";}
-    private void pickDate(EditText field){LocalDate date;try{date=LocalDate.parse(field.getText().toString().trim(),DATE);}catch(RuntimeException ex){date=selectedDate;}new DatePickerDialog(this,(p,y,m,d)->field.setText(LocalDate.of(y,m+1,d).toString()),date.getYear(),date.getMonthValue()-1,date.getDayOfMonth()).show();}
-    private String dateLabel(LocalDate date){String[] day={"周一","周二","周三","周四","周五","周六","周日"};return date.getMonthValue()+" 月 "+date.getDayOfMonth()+" 日  "+day[date.getDayOfWeek().getValue()-1]+(date.equals(LocalDate.now())?" · 今天":"");}
-    private static ZoneId safeZone(String id){try{return ZoneId.of(id);}catch(RuntimeException ex){return ZoneId.systemDefault();}}
-    private String duration(long ms){long seconds=Math.max(0,ms)/1000,minutes=seconds/60;if(minutes>=60)return minutes/60+" 小时 "+minutes%60+" 分";if(minutes>0)return minutes+" 分钟";return seconds+" 秒";}
-    private String countdown(long ms){long s=(Math.max(0,ms)+999)/1000;return s>=3600?String.format(Locale.ROOT,"%d:%02d:%02d",s/3600,(s/60)%60,s%60):String.format(Locale.ROOT,"%02d:%02d",s/60,s%60);}
-    private static boolean same(String a,String b){return a==null?b==null:a.equals(b);}
-    private void toast(String message){Toast.makeText(this,message,Toast.LENGTH_LONG).show();}
-    private void error(RuntimeException error){toast(error.getMessage()==null?"操作未完成，请稍后重试。":error.getMessage());}
-    private int dp(float value){return Math.round(value*getResources().getDisplayMetrics().density);}
-    private LinearLayout column(){LinearLayout l=new LinearLayout(this);l.setOrientation(LinearLayout.VERTICAL);return l;}
+    private void renderToday(){header("今日进度",false);body.addView(label(today.getMonthValue()+"月"+today.getDayOfMonth()+"日",16,MUTED,false));LedgerStore.DaySnapshot day=store.getDaySnapshot(today);UiKit.Ring total=new UiKit.Ring(this);total.set(day.totalProgress/100,percent(day.totalProgress),"",false);body.addView(total,new LinearLayout.LayoutParams(-1,dp(this,238)));TextView note=label("按任务优先级计算",14,MUTED,false);note.setGravity(Gravity.CENTER);body.addView(note);gap(body,18);for(LedgerStore.DayTask t:day.items)if(!t.archived){body.addView(taskRow(t.title,t.progress,null));divider(body);}if(store.getTasks(today).isEmpty()){TextView empty=label("暂无任务，今日总进度为 0%",15,MUTED,false);empty.setGravity(Gravity.CENTER);body.addView(empty,new LinearLayout.LayoutParams(-1,dp(this,74)));}gap(body,22);divider(body);body.addView(menu("更多", "more",()->navigate("more")));}
+    private void renderMore(){header("更多",true);gap(body,30);for(String[] item:new String[][]{{"history","历史记录","history"},{"export","导出记录","export"},{"settings","提醒设置","bell"},{"backup","本地存储与备份","export"},{"weights","进度如何计算","info"}}){body.addView(menu(item[1],item[2],()->navigate(item[0])));gap(body,12);}}
+    private void renderWeights(){header("进度如何计算",true);gap(body,24);LedgerStore.DaySnapshot d=store.getDaySnapshot(today);UiKit.Ring r=new UiKit.Ring(this);r.set(d.totalProgress/100,percent(d.totalProgress),"今日总进度",false);body.addView(r,new LinearLayout.LayoutParams(-1,dp(this,220)));for(LedgerStore.DayTask t:d.items)if(!t.archived){LinearLayout line=row();line.setPadding(0,dp(this,12),0,dp(this,12));line.addView(label(t.title,16,INK,false),new LinearLayout.LayoutParams(0,-2,1));line.addView(label(t.progress+"% × "+percent(t.weight*100),15,MUTED,false));body.addView(line);divider(body);}gap(body,22);body.addView(label("1  按任务优先级分配权重\n2  前面的任务依次占剩余权重的一半\n3  最后一个任务获得全部剩余权重\n\n部分完成按比例计算；没有任务时为 0%。",15,INK,false));gap(body,20);notice(body,"专注计时不会自动改变任务进度");}
+    private void renderSettings(){header("提醒设置",true);gap(body,26);toggle("专注结束提醒","reminders",true);toggle("声音","sound",true);toggle("振动","vibration",true);gap(body,22);body.addView(menu(timer.notificationsGranted()?"通知权限 · 已开启":"通知权限 · 未开启","bell",this::requestNotifications));gap(body,12);body.addView(menu(timer.exactAlarmGranted()?"精确提醒 · 已开启":"精确提醒 · 可选开启","history",()->{if(Build.VERSION.SDK_INT>=31)launch(new Intent(Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM,Uri.parse("package:"+getPackageName())));}));gap(body,22);body.addView(label("通知关闭时仍可使用计时与记录。未开启精确提醒时，锁屏提醒可能延迟，返回后会校正。\n\nrealme 等系统可能限制后台运行，可在系统应用设置中允许后台活动。强行停止应用后无法继续提醒。设备重启时，只保留已保存的专注检查点，不猜测关机期间投入。",14,MUTED,false));gap(body,18);body.addView(button("前往系统应用设置",false,()->launch(new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS,Uri.parse("package:"+getPackageName())))));gap(body,12);body.addView(label("声音和振动也受系统通知渠道、音量与勿扰模式控制。",12,MUTED,false));}
+    private void toggle(String title,String key,boolean defaultValue){LinearLayout r=row();r.setGravity(Gravity.CENTER_VERTICAL);TextView t=label(title,18,INK,false);r.addView(t,new LinearLayout.LayoutParams(0,dp(this,70),1));t.setGravity(Gravity.CENTER_VERTICAL);Switch s=new Switch(this);s.setChecked(getSharedPreferences("shiben-settings",MODE_PRIVATE).getBoolean(key,defaultValue));s.setContentDescription(title);s.setOnCheckedChangeListener((v,on)->getSharedPreferences("shiben-settings",MODE_PRIVATE).edit().putBoolean(key,on).apply());r.addView(s);body.addView(r);divider(body);}
+    private void requestNotifications(){if(Build.VERSION.SDK_INT>=33&&checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)!=PackageManager.PERMISSION_GRANTED)requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS},NOTIFY);else launch(new Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(Settings.EXTRA_APP_PACKAGE,getPackageName()));}
+    private void renderBackup(){header("本地存储与备份",true);gap(body,26);body.addView(label("历史记录保存在本机",21,INK,true));gap(body,10);body.addView(label("SQLite 保存原始记录；每日 Markdown 持久留存，不会自动过期。",15,MUTED,false));gap(body,22);notice(body,"卸载应用或清除应用数据会导致本机记录丢失。请先导出到你选择的位置。");gap(body,26);body.addView(button("选择外部备份文件夹",true,()->launchForResult(new Intent(Intent.ACTION_OPEN_DOCUMENT_TREE).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION|Intent.FLAG_GRANT_WRITE_URI_PERMISSION|Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION),BACKUP_TREE)));gap(body,12);body.addView(label("选择后，每日 Markdown 将同步到该文件夹。文件夹由系统提供；访问权限失效会明确提示。外部备份是可读记录，不是应用内自动恢复包。",14,MUTED,false));gap(body,14);body.addView(label(DailyArchive.get(this).getBackupStatus(),13,MUTED,false));gap(body,16);body.addView(button("立即更新备份",false,()->{DailyArchive.schedule(this);toast("已安排更新备份");}));gap(body,10);body.addView(button("停止外部自动备份",false,()->new AlertDialog.Builder(this).setTitle("停止外部自动备份？").setMessage("已保存的外部文件不会被删除。").setNegativeButton("取消",null).setPositiveButton("停止",(d,w)->{DailyArchive.get(this).clearBackupTree();render();}).show()));gap(body,20);body.addView(button("导出记录",true,()->navigate("export")));}
+    private void renderHistory(){LinearLayout h=header("历史记录",true);h.addView(iconButton("history","选择日期",()->pickDate(detailDay,d->{detailDay=d;navigate("detail");})));gap(body,24);List<LocalDate> days=store.getRecordedDays();if(days.isEmpty()){empty("还没有历史记录","开始专注或更新任务进度后，\n会在这里留下记录。",()->{page="";render();},"返回今日");return;}for(LocalDate date:days){LedgerStore.DaySnapshot d=store.getDaySnapshot(date);LinearLayout card=column();card.setPadding(dp(this,18),dp(this,18),dp(this,18),dp(this,18));card.setBackground(shape(PAPER,LINE,10,this));card.addView(label(date.getYear()+"年 "+date.getMonthValue()+"月"+date.getDayOfMonth()+"日",21,INK,true));gap(card,8);card.addView(label("当日进度  "+percent(d.totalProgress),18,TEAL,false));gap(card,6);card.addView(label(d.items.size()+" 个任务 · 专注 "+shortDuration(d.totalActualMs),13,MUTED,false));if(!d.completeSnapshot)card.addView(label("旧版记录：任务进度与优先级可能未知",12,MUTED,false));card.setOnClickListener(v->{detailDay=date;navigate("detail");});body.addView(card);gap(body,14);}body.addView(label("本地记录，不会自动过期",13,MUTED,false));}
+    private void renderDetail(){header(detailDay.getMonthValue()+"月"+detailDay.getDayOfMonth()+"日",true);LedgerStore.DaySnapshot d=store.getDaySnapshot(detailDay);UiKit.Ring r=new UiKit.Ring(this);r.set(d.totalProgress/100,percent(d.totalProgress),detailDay.toString(),false);body.addView(r,new LinearLayout.LayoutParams(-1,dp(this,225)));if(!d.completeSnapshot){notice(body,"旧版未保存完整历史快照。未知进度与优先级不会被推算。");gap(body,14);}for(LedgerStore.DayTask t:d.items){body.addView(taskRow(t.title+(t.archived?"（已移除）":""),t.progress,null));body.addView(label((t.rank<0?"优先级未知":"优先级 "+t.rank)+" · 权重 "+percent(t.weight*100)+" · 专注 "+shortDuration(t.actualMs),12,MUTED,false));divider(body);}gap(body,18);body.addView(label("实际专注合计  "+shortDuration(d.totalActualMs),17,INK,true));gap(body,24);body.addView(button("导出这一天",true,()->{rangeStart=rangeEnd=detailDay;rangeMode="day";navigate("export");}));}
+    private void renderExport(){header("导出记录",true);gap(body,24);body.addView(label("文件格式",17,INK,true));gap(body,10);LinearLayout formats=row();formats.addView(button((exportFormat.equals("PNG")?"● ":"○ ")+"PNG 图片",exportFormat.equals("PNG"),()->{exportFormat="PNG";render();}),new LinearLayout.LayoutParams(0,dp(this,58),1));View gap=new View(this);formats.addView(gap,new LinearLayout.LayoutParams(dp(this,12),1));formats.addView(button((exportFormat.equals("MARKDOWN")?"● ":"○ ")+"Markdown",exportFormat.equals("MARKDOWN"),()->{exportFormat="MARKDOWN";render();}),new LinearLayout.LayoutParams(0,dp(this,58),1));body.addView(formats);gap(body,28);body.addView(label("导出范围",17,INK,true));String[][] scopes={{"day","按日"},{"month","按月"},{"year","按年"},{"custom","自定义范围"},{"all","全部记录"}};for(String[] scope:scopes){RadioButton b=new RadioButton(this);b.setText(scope[1]);b.setTextSize(17);b.setTextColor(INK);b.setChecked(rangeMode.equals(scope[0]));b.setPadding(0,dp(this,8),0,dp(this,8));b.setOnClickListener(v->{rangeMode=scope[0];render();});body.addView(b,new LinearLayout.LayoutParams(-1,dp(this,54)));divider(body);}gap(body,18);
+        if(!rangeMode.equals("all")){String text=rangeMode.equals("month")?rangeStart.getYear()+"年 "+rangeStart.getMonthValue()+"月":rangeMode.equals("year")?rangeStart.getYear()+"年":rangeStart.toString();body.addView(menu((rangeMode.equals("custom")?"开始日期  ":"选择日期  ")+text,"history",()->pickDate(rangeStart,d->{rangeStart=d;if(!rangeMode.equals("custom"))rangeEnd=d;render();})));if(rangeMode.equals("custom")){gap(body,10);body.addView(menu("结束日期  "+rangeEnd,"history",()->pickDate(rangeEnd,d->{rangeEnd=d;render();})));gap(body,8);body.addView(label("包含开始与结束日期",12,MUTED,false));}}
+        gap(body,18);body.addView(label("按日期排序，保留每日任务优先级。多日 PNG 或超长列表会保存为 ZIP，包含完整图片。",13,MUTED,false));gap(body,24);body.addView(button("预览导出",true,this::startExport),new LinearLayout.LayoutParams(-1,dp(this,56)));}
+    private V2Reports.DateRange exportRange(){switch(rangeMode){case "all":return V2Reports.DateRange.all();case "month":return V2Reports.DateRange.month(YearMonth.from(rangeStart));case "year":return V2Reports.DateRange.year(rangeStart.getYear());case "custom":return V2Reports.DateRange.custom(rangeStart,rangeEnd);default:return V2Reports.DateRange.day(rangeStart);}}
+    private void startExport(){try{ExportWorker.Job current=exportJobId==null?null:ExportWorker.get(this).getJob(exportJobId);if(current!=null&&(current.state==ExportWorker.State.RUNNING||current.state==ExportWorker.State.QUEUED)){page="preview";render();return;}V2Reports.DateRange range=exportRange();page="preview";ExportWorker.Job job=ExportWorker.get(this).start(new ExportWorker.Request(range,ExportWorker.Format.valueOf(exportFormat)),this::onExportChanged);exportJobId=job.id;render();}catch(RuntimeException e){toast(e.getMessage());}}
+    private void onExportChanged(ExportWorker.Job job){if(isFinishing()||isDestroyed())return;if(exportJobId!=null&&!exportJobId.equals(job.id))return;exportJobId=job.id;if("preview".equals(page)){if(job.state==ExportWorker.State.SUCCEEDED||job.state==ExportWorker.State.FAILED||job.state==ExportWorker.State.CANCELLED)render();else if(exportStatus!=null)exportStatus.setText(job.message+" "+job.completed+" / "+job.total);}}
+    private void renderPreview(){header(exportFormat.equals("PNG")?"PNG 预览":"Markdown 预览",true);gap(body,20);ExportWorker.Job job=exportJobId==null?null:ExportWorker.get(this).getJob(exportJobId);if(job==null){body.addView(label("导出任务已结束或被系统关闭，请重新生成。",16,MUTED,false));body.addView(button("重新生成",true,this::startExport));return;}if(job.state!=ExportWorker.State.SUCCEEDED){exportStatus=label(job.error==null?job.message:job.error,16,MUTED,false);body.addView(exportStatus);gap(body,22);if(job.state==ExportWorker.State.FAILED||job.state==ExportWorker.State.CANCELLED)body.addView(button("重新生成",true,this::startExport));else body.addView(button("取消导出",false,job::cancel));return;}ExportWorker.Result result=job.result;if(result==null)return;body.addView(label(result.dayCount+" 天记录 · "+result.fileName,13,MUTED,false));gap(body,18);if(result.previewImage!=null&&result.previewImage.exists()){ImageView image=new ImageView(this);BitmapFactory.Options options=new BitmapFactory.Options();options.inJustDecodeBounds=true;BitmapFactory.decodeFile(result.previewImage.getAbsolutePath(),options);options.inSampleSize=Math.max(1,options.outWidth/800);options.inJustDecodeBounds=false;image.setImageBitmap(BitmapFactory.decodeFile(result.previewImage.getAbsolutePath(),options));image.setAdjustViewBounds(true);image.setContentDescription("导出首页预览，保存文件包含全部任务");body.addView(image,new LinearLayout.LayoutParams(-1,-2));if(result.pageCount>1){gap(body,8);body.addView(label("预览第 1 页；保存文件含全部 "+result.pageCount+" 页",13,MUTED,false));}}else if(result.markdownPreview!=null){TextView text=label(result.markdownPreview,14,INK,false);text.setTextIsSelectable(true);text.setTypeface(Typeface.MONOSPACE);text.setPadding(dp(this,14),dp(this,14),dp(this,14),dp(this,14));text.setBackground(shape(0xffF0F0EE,LINE,8,this));body.addView(text);if(result.previewTruncated)body.addView(label("预览节选，保存包含完整内容",12,MUTED,false));}gap(body,20);if(result.markdownPreview!=null){body.addView(button("复制内容",false,()->{if(result.markdownForCopy==null){toast("内容较大，请保存 Markdown 文件");return;}((android.content.ClipboardManager)getSystemService(CLIPBOARD_SERVICE)).setPrimaryClip(ClipData.newPlainText("时本记录",result.markdownForCopy));toast("已复制到剪贴板");}));gap(body,10);}body.addView(button("保存文件",true,()->{pendingFile=result.file.getAbsolutePath();pendingMime=result.mimeType;pendingName=result.fileName;Intent intent=new Intent(Intent.ACTION_CREATE_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE).setType(result.mimeType).putExtra(Intent.EXTRA_TITLE,result.fileName);launchForResult(intent,SAVE_FILE);}));}
+    @Override protected void onActivityResult(int req,int result,Intent data){super.onActivityResult(req,result,data);if(result!=RESULT_OK||data==null||data.getData()==null)return;Uri uri=data.getData();if(req==BACKUP_TREE){try{DailyArchive.get(this).setBackupTree(uri,data.getFlags());toast("已选择备份位置");render();}catch(RuntimeException e){toast("无法访问所选文件夹："+e.getMessage());}}else if(req==SAVE_FILE){if(pendingFile==null||!new File(pendingFile).exists()){toast("临时导出文件已不可用，请重新生成");return;}ExportWorker.get(this).copyToDocument(new File(pendingFile),uri,job->{if(isFinishing()||isDestroyed())return;if(job.state==ExportWorker.State.SUCCEEDED)new AlertDialog.Builder(this).setTitle("文件已保存").setMessage("已保存到你选择的位置。建议定期备份，避免卸载后丢失记录。").setNegativeButton("返回",null).setPositiveButton("查看文件",(d,w)->launch(new Intent(Intent.ACTION_VIEW).setDataAndType(uri,pendingMime).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION))).show();else if(job.state==ExportWorker.State.FAILED)toast("保存失败："+job.error);});}}
+    @Override public void onRequestPermissionsResult(int r,String[] p,int[] g){super.onRequestPermissionsResult(r,p,g);if(r==NOTIFY){toast(g.length>0&&g[0]==PackageManager.PERMISSION_GRANTED?"通知已开启":"通知未开启，计时与记录仍可使用");render();}}
+    private void pickDate(LocalDate initial,java.util.function.Consumer<LocalDate> selected){new DatePickerDialog(this,(v,y,m,d)->selected.accept(LocalDate.of(y,m+1,d)),initial.getYear(),initial.getMonthValue()-1,initial.getDayOfMonth()).show();}
+    private void navigate(String p){page=p;render();}
+    @Override public void onBackPressed(){leaveEditor(()->{if(page.isEmpty()){if(tab!=0){tab=0;render();}else super.onBackPressed();}else{switch(page){case "edit":case "reorder":page="";clearDraft();break;case "more":page="";break;case "detail":page="history";break;case "preview":page="export";break;default:page="more";}render();}});}
+    private LinearLayout header(String title,boolean back){LinearLayout h=row();h.setGravity(Gravity.CENTER_VERTICAL);if(back)h.addView(iconButton("back","返回",this::onBackPressed));TextView text=label(title,25,INK,true);text.setMaxLines(2);h.addView(text,new LinearLayout.LayoutParams(0,-2,1));body.addView(h,new LinearLayout.LayoutParams(-1,-2));return h;}
+    private View iconButton(String type,String desc,Runnable action){FrameLayout box=new FrameLayout(this);Icon icon=new Icon(this,type,INK);FrameLayout.LayoutParams p=new FrameLayout.LayoutParams(dp(this,25),dp(this,25),Gravity.CENTER);box.addView(icon,p);box.setLayoutParams(new LinearLayout.LayoutParams(dp(this,45),dp(this,48)));box.setContentDescription(desc);box.setFocusable(true);box.setOnClickListener(v->action.run());return box;}
+    private TextView textAction(String text,Runnable action){TextView v=label(text,17,TEAL,true);v.setGravity(Gravity.CENTER);v.setPadding(dp(this,12),0,dp(this,12),0);v.setMinWidth(dp(this,44));v.setMinHeight(dp(this,48));v.setOnClickListener(w->action.run());return v;}
+    private LinearLayout menu(String title,String icon,Runnable action){LinearLayout r=row();r.setGravity(Gravity.CENTER_VERTICAL);r.setPadding(dp(this,14),dp(this,14),dp(this,10),dp(this,14));r.setMinimumHeight(dp(this,66));r.setBackground(shape(PAPER,LINE,8,this));r.addView(new Icon(this,icon,INK),new LinearLayout.LayoutParams(dp(this,25),dp(this,25)));TextView text=label(title,17,INK,false);text.setPadding(dp(this,14),0,dp(this,6),0);r.addView(text,new LinearLayout.LayoutParams(0,-2,1));r.addView(new Icon(this,"chevron",MUTED),new LinearLayout.LayoutParams(dp(this,20),dp(this,20)));r.setContentDescription(title);r.setFocusable(true);r.setOnClickListener(v->action.run());return r;}
+    private void empty(String title,String detail,Runnable action,String actionTitle){gap(body,70);Icon icon=new Icon(this,"tasks",MUTED);LinearLayout.LayoutParams p=new LinearLayout.LayoutParams(dp(this,80),dp(this,80));p.gravity=Gravity.CENTER;body.addView(icon,p);gap(body,28);TextView t=label(title,23,INK,true);t.setGravity(Gravity.CENTER);body.addView(t);gap(body,14);TextView d=label(detail,15,MUTED,false);d.setGravity(Gravity.CENTER);body.addView(d);gap(body,35);body.addView(button(actionTitle,true,action),new LinearLayout.LayoutParams(-1,dp(this,56)));}
+    private void notice(LinearLayout parent,String text){TextView t=label(text,14,0xff795526,false);t.setPadding(dp(this,14),dp(this,13),dp(this,14),dp(this,13));t.setBackground(shape(0xffFFF1DC,0,8,this));parent.addView(t,new LinearLayout.LayoutParams(-1,-2));}
+    private Button button(String text,boolean filled,Runnable action){Button b=new Button(this);b.setText(text);b.setTextSize(18);b.setTextColor(filled?0xffFFFFFF:TEAL);b.setAllCaps(false);b.setTypeface(Typeface.DEFAULT,Typeface.BOLD);b.setBackground(shape(filled?TEAL:PAPER,filled?0:TEAL,12,this));b.setMinHeight(dp(this,52));b.setPadding(dp(this,12),dp(this,8),dp(this,12),dp(this,8));b.setOnClickListener(v->action.run());return b;}
     private LinearLayout row(){LinearLayout l=new LinearLayout(this);l.setOrientation(LinearLayout.HORIZONTAL);return l;}
-    private TextView label(String value,float size,int color,boolean bold){TextView t=new TextView(this);t.setText(value);t.setTextSize(size);t.setTextColor(color);t.setTypeface(Typeface.create("sans-serif",bold?Typeface.BOLD:Typeface.NORMAL));t.setIncludeFontPadding(true);t.setLineSpacing(dp(2),1.08f);return t;}
-    private TextView fieldLabel(String name){TextView t=label(name,13,MUTED,true);t.setPadding(0,0,0,dp(6));return t;}
-    private Button button(String text,boolean primary){Button b=new Button(this);b.setText(text);b.setAllCaps(false);b.setTextSize(14);b.setTextColor(primary?PAPER:JADE);b.setTypeface(Typeface.create("sans-serif",Typeface.BOLD));b.setMinHeight(dp(48));b.setMinimumHeight(dp(48));b.setMinWidth(0);b.setMinimumWidth(dp(48));b.setPadding(dp(14),dp(10),dp(14),dp(10));b.setBackground(shape(primary?JADE:Color.TRANSPARENT,14));b.setStateListAnimator(null);return b;}
-    private EditText input(String hint,String value,int type){EditText e=new EditText(this);e.setHint(hint);e.setText(value);e.setTextSize(16);e.setTextColor(INK);e.setHintTextColor(MUTED);e.setInputType(type);e.setSingleLine(true);e.setMinimumHeight(dp(52));e.setPadding(dp(12),dp(10),dp(12),dp(10));GradientDrawable bg=shape(PAPER,12);bg.setStroke(dp(1),LINE);e.setBackground(bg);e.setContentDescription(hint);return e;}
-    private GradientDrawable shape(int color,int radius){GradientDrawable d=new GradientDrawable();d.setColor(color);d.setCornerRadius(dp(radius));return d;}
-    private LinearLayout card(int color){LinearLayout c=column();c.setPadding(dp(18),dp(18),dp(18),dp(18));c.setBackground(shape(color,22));return c;}
-    private void addCard(LinearLayout card){body.addView(card,new LinearLayout.LayoutParams(-1,-2));gap(body,14);}
-    private void gap(LinearLayout parent,int height){View v=new View(this);v.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);parent.addView(v,new LinearLayout.LayoutParams(1,dp(height)));}
-    private void gapHorizontal(LinearLayout parent,int width){View v=new View(this);v.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);parent.addView(v,new LinearLayout.LayoutParams(dp(width),1));}
-    private LinearLayout dialogForm(){LinearLayout form=column();form.setPadding(dp(22),dp(12),dp(22),dp(16));return form;}
-    private ScrollView wrapForm(LinearLayout form){ScrollView s=new ScrollView(this);s.setFillViewport(false);s.addView(form);return s;}
-    private AlertDialog dialog(String title,LinearLayout form,String positive,Runnable action){return new AlertDialog.Builder(this).setTitle(title).setView(wrapForm(form)).setNegativeButton("取消",null).setPositiveButton(positive,(d,w)->action.run()).create();}
-    private void styleDialog(AlertDialog dialog){if(dialog.getWindow()!=null)dialog.getWindow().setBackgroundDrawable(shape(PAPER,24));dialog.getButton(AlertDialog.BUTTON_POSITIVE).setTextColor(JADE);dialog.getButton(AlertDialog.BUTTON_NEGATIVE).setTextColor(MUTED);}
-    private final class TimerDial extends View {
-        private final Paint paint=new Paint(Paint.ANTI_ALIAS_FLAG);private final RectF rect=new RectF();private float progress;
-        TimerDial(Context context){super(context);}
-        void setProgress(float value){progress=value;invalidate();}
-        @Override protected void onDraw(Canvas canvas){super.onDraw(canvas);float stroke=dp(7),pad=dp(15);rect.set(pad,pad,getWidth()-pad,getHeight()-pad);paint.setStyle(Paint.Style.STROKE);paint.setStrokeWidth(stroke);paint.setStrokeCap(Paint.Cap.ROUND);paint.setColor(Color.rgb(48,72,63));canvas.drawOval(rect,paint);paint.setColor(Color.rgb(173,205,159));canvas.drawArc(rect,-90,360*progress,false,paint);}
-    }
+    private LinearLayout column(){LinearLayout l=new LinearLayout(this);l.setOrientation(LinearLayout.VERTICAL);return l;}
+    private TextView label(String text,int size,int color,boolean bold){TextView t=new TextView(this);t.setText(text==null?"":text);t.setTextSize(size);t.setTextColor(color);t.setIncludeFontPadding(false);if(bold)t.setTypeface(Typeface.DEFAULT,Typeface.BOLD);return t;}
+    private void gap(LinearLayout l,int d){l.addView(new View(this),new LinearLayout.LayoutParams(1,dp(this,d)));}
+    private void divider(LinearLayout l){View v=new View(this);v.setBackgroundColor(LINE);l.addView(v,new LinearLayout.LayoutParams(-1,Math.max(1,dp(this,.6f))));}
+    private String percent(double n){if(!Double.isFinite(n))return "未知";return Math.abs(n-Math.round(n))<.0001?Math.round(n)+"%":String.format(Locale.ROOT,"%.1f%%",n);}
+    private String shortDuration(long ms){long s=Math.max(0,ms)/1000;return (s/60)+" 分 "+(s%60)+" 秒";}
+    private void run(Runnable task){try{task.run();}catch(RuntimeException e){toast(e.getMessage()==null?"操作未完成，请重试":e.getMessage());}}
+    private void toast(String text){Toast.makeText(this,text==null?"操作未完成":text,Toast.LENGTH_SHORT).show();}
+    private void launch(Intent i){try{startActivity(i);}catch(ActivityNotFoundException e){toast("系统暂不支持这个操作");}}
+    private void launchForResult(Intent i,int code){try{startActivityForResult(i,code);}catch(ActivityNotFoundException e){toast("系统暂不支持这个操作");}}
 }
