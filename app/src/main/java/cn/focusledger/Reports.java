@@ -72,7 +72,7 @@ public final class Reports {
             sortedCategories.sort((a, b) -> Long.compare(b.actualMs, a.actualMs));
 
             StringBuilder out = new StringBuilder();
-            out.append("# 专注账本 · ").append(date).append("\n\n");
+            out.append("# 时本 · ").append(date).append("\n\n");
             out.append("- 实际专注：**").append(duration(total)).append("**\n");
             out.append("- 当日相关记录：").append(entries.size()).append(" 条\n");
             out.append("- 统计依据：仅已保存的实际专注时间；暂停、休息和未保存的当前计时不计入。\n\n");

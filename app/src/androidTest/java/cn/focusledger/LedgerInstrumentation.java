@@ -32,7 +32,7 @@ public final class LedgerInstrumentation extends Instrumentation {
             check(store.getTasks(LocalDate.now()).size()==6,"six editable recurring default tasks");
             check(context.checkSelfPermission("android.permission.INTERNET")!=0,"no Internet permission");
             check((context.getApplicationInfo().flags & android.content.pm.ApplicationInfo.FLAG_ALLOW_BACKUP)==0,"automatic cloud backup disabled");
-            runOnMainSync(()->{check(find(screen.getWindow().getDecorView(),"专注账本")!=null,"native launch and Chinese brand");});
+            runOnMainSync(()->{check(find(screen.getWindow().getDecorView(),"时本")!=null,"native launch and Chinese brand");});
 
             LedgerStore.Task task=store.getTasks(LocalDate.now()).get(0);
             store.setTaskDone(task.id,LocalDate.now(),false);

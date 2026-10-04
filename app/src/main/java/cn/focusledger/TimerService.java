@@ -32,7 +32,7 @@ public final class TimerService extends Service {
     static PendingIntent open(Context c){return PendingIntent.getActivity(c,1,new Intent(c,MainActivity.class),PendingIntent.FLAG_UPDATE_CURRENT|PendingIntent.FLAG_IMMUTABLE);}
     private Notification liveNotification(){
         TimerCoordinator t=TimerCoordinator.get(this); TimerEngine.State s=t.engine().snapshot();
-        String title=s==null?"专注账本":s.taskTitle;
+        String title=s==null?"时本":s.taskTitle;
         boolean paused=t.engine().isPaused(); long remaining=t.remainingMs();
         String action=paused?TimerReceiver.RESUME:TimerReceiver.PAUSE;
         PendingIntent control=PendingIntent.getBroadcast(this,paused?3:2,new Intent(this,TimerReceiver.class).setAction(action),PendingIntent.FLAG_UPDATE_CURRENT|PendingIntent.FLAG_IMMUTABLE);

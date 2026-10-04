@@ -170,9 +170,9 @@ public final class MainActivity extends Activity {
         scroll.addView(body, new ScrollView.LayoutParams(-1,-2));
         root.addView(scroll, new LinearLayout.LayoutParams(-1,0,1));
         LinearLayout brand = row(); brand.setGravity(Gravity.CENTER_VERTICAL);
-        TextView logo = label("▤", 21, JADE, true); logo.setContentDescription("专注账本标志"); logo.setGravity(Gravity.CENTER);
+        TextView logo = label("▤", 21, JADE, true); logo.setContentDescription("时本标志"); logo.setGravity(Gravity.CENTER);
         logo.setBackground(shape(PALE, 12)); brand.addView(logo, new LinearLayout.LayoutParams(dp(38),dp(38)));
-        TextView brandText = label("专注账本", 16, INK, true); brandText.setPadding(dp(10),0,0,0); brand.addView(brandText);
+        TextView brandText = label("时本", 16, INK, true); brandText.setPadding(dp(10),0,0,0); brand.addView(brandText);
         TextView privateTag = label("本地 · 私人", 11, MUTED, false); privateTag.setGravity(Gravity.END);
         brand.addView(privateTag, new LinearLayout.LayoutParams(0,-2,1)); body.addView(brand);
         gap(body,22);
@@ -207,8 +207,8 @@ public final class MainActivity extends Activity {
     }
 
     private void renderToday() {
-        body.addView(label("把时间，交给重要的事",25,INK,true)); gap(body,7);
-        body.addView(label("一段专注，一笔真实的投入。",13,MUTED,false)); gap(body,18);
+        body.addView(label("今天，你把注意力投向了哪里？",25,INK,true)); gap(body,7);
+        body.addView(label("记录每一份注意力，投资你想成为的人。",13,MUTED,false)); gap(body,18);
         addDateNavigation(false);
         DayStats today = aggregate(selectedDate,selectedDate);
         LinearLayout summary = card(Color.WHITE);
@@ -366,7 +366,7 @@ public final class MainActivity extends Activity {
         LinearLayout reliability=card(PALE);reliability.addView(label("息屏与后台运行",17,JADE,true));gap(reliability,8);reliability.addView(label("realme 等机型可能限制后台活动。可在系统应用管理中允许后台运行，避免“清理后台”。若提醒被延迟，重新打开应用会按保存的计时恢复。",13,INK,false));gap(reliability,10);reliability.addView(label("强行停止应用会中断提醒；设备重启会结束未完成的一段，保留已保存的有效投入。系统权限无法保证所有机型提醒完全准时。",12,MUTED,false));gap(reliability,12);Button battery=button("打开系统电池设置",false);battery.setOnClickListener(v->{try{startActivity(new Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS));}catch(RuntimeException ex){startActivity(new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS,Uri.parse("package:"+getPackageName())));}});reliability.addView(battery);addCard(reliability);
         LinearLayout data=card(Color.WHITE);data.addView(label("数据与你",19,INK,true));gap(data,8);data.addView(label("所有任务与时间记录保存在这台设备上。无账号、无广告、无统计 SDK，不读取其他应用的使用行为。",13,MUTED,false));gap(data,12);
         Button copy=button("复制 "+selectedDate+" 的 Markdown",false);copy.setOnClickListener(v->copyDaily());data.addView(copy);Button csv=button("导出全部专注 CSV",false);csv.setOnClickListener(v->export("csv"));data.addView(csv);Button backup=button("导出完整 JSON 备份",false);backup.setOnClickListener(v->export("json"));data.addView(backup);gap(data,8);data.addView(label("导出到你选择的位置。卸载会清除本地数据，建议定期保留备份。本版本的 JSON 用于数据留存，不提供自动导入。",12,AMBER,false));addCard(data);
-        LinearLayout attribution=card(Color.WHITE);attribution.addView(label("时间归属规则",16,INK,true));gap(attribution,8);attribution.addView(label("每段专注记住开始时的时区，跨午夜会拆分到对应日期。修改系统时区不会重写历史；实际时长以计时记录为准，暂停不计入。",13,MUTED,false));gap(attribution,8);attribution.addView(label("当前设备时区："+ZoneId.systemDefault().getId(),12,MUTED,false));addCard(attribution);TextView footer=label("专注账本 · 本地原生版\n让投入有记录，让完成由你决定。",12,MUTED,false);footer.setGravity(Gravity.CENTER);body.addView(footer);
+        LinearLayout attribution=card(Color.WHITE);attribution.addView(label("时间归属规则",16,INK,true));gap(attribution,8);attribution.addView(label("每段专注记住开始时的时区，跨午夜会拆分到对应日期。修改系统时区不会重写历史；实际时长以计时记录为准，暂停不计入。",13,MUTED,false));gap(attribution,8);attribution.addView(label("当前设备时区："+ZoneId.systemDefault().getId(),12,MUTED,false));addCard(attribution);TextView footer=label("时本 · 本地原生版\n记录每一份注意力，投资你想成为的人。",12,MUTED,false);footer.setGravity(Gravity.CENTER);body.addView(footer);
     }
 
     private void showProjectDialog(LedgerStore.Project original) {
@@ -379,8 +379,8 @@ public final class MainActivity extends Activity {
         Intent intent=new Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS);intent.putExtra(Settings.EXTRA_APP_PACKAGE,getPackageName());try{startActivity(intent);}catch(RuntimeException ex){startActivity(new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS,Uri.parse("package:"+getPackageName())));}
     }
     @Override public void onRequestPermissionsResult(int request,String[] permissions,int[] grants){super.onRequestPermissionsResult(request,permissions,grants);if(request==REQUEST_NOTIFICATIONS){render(true);toast(coordinator.notificationsGranted()?"通知提醒已允许":"仍可计时与记录；通知可稍后在设置中开启。");}}
-    private void copyDaily(){ClipboardManager clipboard=(ClipboardManager)getSystemService(CLIPBOARD_SERVICE);clipboard.setPrimaryClip(ClipData.newPlainText("专注账本 "+selectedDate,Reports.dailyMarkdown(store,selectedDate)));toast("已复制 "+selectedDate+" 的 Markdown");}
-    private void export(String kind){try{pendingExportKind=kind;pendingExport="csv".equals(kind)?"\uFEFF"+Reports.csv(store):Reports.backupJson(store);Intent intent=new Intent(Intent.ACTION_CREATE_DOCUMENT);intent.addCategory(Intent.CATEGORY_OPENABLE);intent.setType("csv".equals(kind)?"text/csv":"application/json");intent.putExtra(Intent.EXTRA_TITLE,"专注账本-"+LocalDate.now()+"."+kind);startActivityForResult(intent,REQUEST_EXPORT);}catch(RuntimeException ex){pendingExport=null;pendingExportKind=null;toast("无法打开保存位置，请检查系统文件应用。");}}
+    private void copyDaily(){ClipboardManager clipboard=(ClipboardManager)getSystemService(CLIPBOARD_SERVICE);clipboard.setPrimaryClip(ClipData.newPlainText("时本 "+selectedDate,Reports.dailyMarkdown(store,selectedDate)));toast("已复制 "+selectedDate+" 的 Markdown");}
+    private void export(String kind){try{pendingExportKind=kind;pendingExport="csv".equals(kind)?"\uFEFF"+Reports.csv(store):Reports.backupJson(store);Intent intent=new Intent(Intent.ACTION_CREATE_DOCUMENT);intent.addCategory(Intent.CATEGORY_OPENABLE);intent.setType("csv".equals(kind)?"text/csv":"application/json");intent.putExtra(Intent.EXTRA_TITLE,"时本-"+LocalDate.now()+"."+kind);startActivityForResult(intent,REQUEST_EXPORT);}catch(RuntimeException ex){pendingExport=null;pendingExportKind=null;toast("无法打开保存位置，请检查系统文件应用。");}}
     @Override protected void onActivityResult(int request,int result,Intent data){super.onActivityResult(request,result,data);if(request==REQUEST_EXPORT){if(pendingExport==null&&pendingExportKind!=null)pendingExport="csv".equals(pendingExportKind)?"\uFEFF"+Reports.csv(store):Reports.backupJson(store);if(result==RESULT_OK&&data!=null&&data.getData()!=null&&pendingExport!=null){try(OutputStream out=getContentResolver().openOutputStream(data.getData(),"wt")){if(out==null)throw new java.io.IOException("没有可写入的文件");out.write(pendingExport.getBytes(StandardCharsets.UTF_8));out.flush();toast("文件已导出");}catch(Exception ex){toast("导出失败："+(ex.getMessage()==null?"无法写入文件":ex.getMessage()));}}pendingExport=null;pendingExportKind=null;}}
 
     private void rememberDialog(AlertDialog dialog,String kind,String id,java.util.function.Supplier<Bundle> draft) {
