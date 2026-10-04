@@ -15,3 +15,10 @@ artifacts/
 # Locally signed outputs
 focus-ledger-release.apk*
 shiben-release.apk*
+
+# Never include private signing identities or secrets
+*.p12
+*.pfx
+*.key
+.signing-private/
+secrets/

@@ -1,55 +1,36 @@
-# 时本
+# 时本 2.0
 
 记录每一份注意力，投资你想成为的人。
 
-原生 Android 本地个人专注与时间投入账本。无账号、无网络权限、无使用行为跟踪、无服务器、无广告和分析 SDK。
+原生 Java Android 本地专注账本。无账号、无网络权限、无广告、无分析 SDK。暖米白与深青色界面，三个页签：专注、任务、今日。
 
 ## 功能
 
-- 项目分类：Web3、英语、锻炼、读书、个人IP、代码视频，均可改名、添加、换色、归档
-- 每周重复与一次性任务，手动调整顺序；完成勾选完全由用户自评
-- 手动倒计时：至少 15 分钟，以 5 分钟递增；一轮计时，可暂停、继续、提前结束
-- 计时服务、持久状态、可选精确结束提醒；实际时间排除暂停，到点记录以计划时长封顶
-- 当日/周投入、分类占比、次数、历史明细；补记、修改、删除明确标注
-- 每日 Markdown 一键复制，全部记录 CSV、完整元数据 JSON 导出到用户选择的位置
+- 专注页无纵向滚动。选择当前任务，至少15分钟、每次增加5分钟；支持暂停/继续/结束，计时完成只提醒，不自动改任务进度。
+- 单层任务列表，手动排序优先级、编辑名称/进度、保留记录式删除。进度从低于100%保存为100%时播放2秒庆祝；重访不重播。
+- 今日总进度按优先级加权：前面的任务占剩余权重一半，最后任务占全部余数。三项为50/25/25，四项50/25/12.5/12.5；部分进度线性计入。
+- 更多位于今日底部，进入历史、提醒/权限、备份、说明和导出。
+- 每日任务快照冻结名称、顺序、权重及进度；专注实际时长按记录时区跨日分摊。历史不自动过期，旧版未知信息明确标记。
+- 日/月/年/自定义（含起止）/全部范围 Markdown 与 PNG；Markdown 支持完整复制（大文件改为保存），长图片完整分页，多日 PNG 为 ZIP。
+- 每日 Markdown 原子写入内部持久目录，SQLite 为源；可选择外部文件夹自动备份。卸载或清除数据会丢失内部记录，当前无自动导入。
 
-## Android 与隐私边界
+## 构建与验证
 
-- 最低 Android 8.0 / API26，编译与目标 API35。没有原生 `.so`，APK 对 ABI 不作限制。
-- 按开始时的时区归属日期，跨午夜实际区间拆分；历史时区不会被当前设备时区改写。
-- 到点结束不等于任务完成，不自动开始下一轮。
-- 只有通知、前台服务、震动、重启恢复、可选精确闹钟相关权限。拒绝通知仍可使用记录；通知被拒绝或系统通知渠道静音时不能保证声音/震动。
-- 未允许精确闹钟时，息屏通知可能延迟；返回应用时会校正，并封顶于计划时长。
-- Android“强行停止”会取消通知和闹钟，任何应用都不能绕过它。再次打开后按持久状态校正。
-- 重启不猜测关机期间投入：本轮保守结束于最近保存的检查点。息屏时未能运行检查点的区间可能不被保留。设置页说明 realme 后台限制，未在用户真机实测。
-- 禁用系统自动云备份/设备迁移；导出是用户主动选择。卸载会清除本地数据。
-- JSON 是可读数据留存格式，目前没有应用内自动导入。CSV 保留精确毫秒和区间，Markdown 为简洁可读摘要。
-- 历史任务清单分母按当前任务配置加当日留存勾选计算，未提供过去每次计划修改的完整快照；报告中明确标注。
+JDK17+、Android SDK Platform35 / BuildTools35.0.0、Gradle8.11.1。只使用免费官方工具及 JUnit 测试依赖。
 
-## 构建
+```
+./gradlew testDebugUnitTest lintDebug lintRelease assembleDebug assembleRelease assembleDebugAndroidTest
+bash tests/store/run.sh .
+python3 tests/branding/check.py .
+python3 scripts/check-unsigned-apk.py app/build/outputs/apk/release/app-release-unsigned.apk
+```
 
-需要 JDK17+、Android SDK Platform35 / BuildTools35.0.0。工具从官方来源安装，并自行遵守许可。
+云端隔离工具可使用 `scripts/build-cloud.sh`。测试运行器与设备验证见 `docs/TEST_REPORT_V2.md`；旧版测试报告不代表V2结果。设计参考见 `docs/design/v2`，实际截图另行交付。
 
-1. 解压源码或从 Git bundle 克隆
-2. 配置 `ANDROID_HOME`，或建立 `local.properties`：`sdk.dir=/绝对路径/android-sdk`
-3. `./gradlew testDebugUnitTest lintDebug assembleDebug assembleRelease`
-4. Debug APK 可测试安装；Release 默认生成未签名 APK，使用自己的签名密钥签名后安装
+## 安装与签名
 
-已构建签名正式包“时本-1.0.1.apk”，桌面名称为“时本”。新版 applicationId 为 `cn.goff.shiben`，可与旧版 `cn.focusledger` 独立安装；它不会覆盖或卸载旧版，也不会自动读取旧版数据。Java 源码 namespace 仍为 `cn.focusledger`，并不影响安装身份。
+安装身份保持 `cn.goff.shiben`；2.0.0 / code3 / min26 / target35。release 默认未签名。
 
-源码不包含 SDK、构建缓存、设备数据、签名私钥或密码。旧版 1.0.0 的签名私钥在制作环境重置后无法找到，因此本版采用独立包名和新签名。不要为安装时本而卸载旧版；旧数据可先导出留存，当前没有 JSON 自动导入。新签名私钥尚需独立、由用户控制的安全备份，源码/GitHub 备份不能替代它。详见 `docs/INSTALL_AND_BACKUP.md` 与 `docs/SIGNING_KEY_RECOVERY.md`。
+旧版签名已丢失。本次正式密钥不在云端生成；由用户 Mac 后续生成和保管，再本地签名。云端 debug 仅测试。V3 必须相同包名+V2相同正式证书+更大versionCode覆盖升级。详情见 `docs/INSTALL_AND_BACKUP.md`、`docs/SIGNING_KEY_RECOVERY.md`。不要上传私钥或密码。
 
-## 测试
-
-以下是项目可运行的验证命令；1.0.1 实际执行情况与历史 1.0.0 结果分开记录在测试报告中。
-
-- `python3 tests/branding/check.py .`：品牌文案、版本、独立应用身份与数据格式的 39 项静态检查
-- `python3 tests/release/check.py shiben-release.apk`：19 项正式 APK 身份、签名、公钥证书、文案字节码、隐私与非调试标志检查（需 JDK 与 BuildTools35.0.0）
-
-- `./gradlew testDebugUnitTest`：65 个纯 Java 测试
-- `bash tests/store/run.sh .`：25 个实际 Java 辅助方法断言与 13 个提取 SQL 契约检查；后者不是 Android SQLite 运行时测试
-- `./gradlew assembleDebugAndroidTest`：构建独立的自定义 Android 集成测试 APK（无测试钩子进入正式 APK）
-- 在一次性模拟器上安装 Debug app 与测试 APK 后执行 `adb shell am instrument -w cn.goff.shiben.test/cn.focusledger.LedgerInstrumentation`。集成测试会创建测试数据，只能在一次性测试环境运行，不能对用户实际记录运行。
-- Android 测试的计时到点用注入既往 14分55秒的夹具加真实 5秒到点流程缩短等待；不代表真实手机连续 15分钟锁屏测试。
-
-本次实测与未测试范围见 `docs/TEST_REPORT.md`。许可/工具清单见 `docs/DEPENDENCIES.md`。
+计时使用单调时钟，暂停不计入；重启只保留已保存检查点。精确提醒权限、通知渠道与手机后台限制影响提醒。realme GT6 / UI7.0 须真机验证。

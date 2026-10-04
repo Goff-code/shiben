@@ -1,21 +1,26 @@
 #!/usr/bin/env bash
-# Standard release signing with YOUR key. No private key or password is committed.
+# Run only on the user's computer after explicit approval of the release identity.
+# Never creates a key. Passwords are entered locally or supplied by a protected file.
 set -euo pipefail
 cd "$(dirname "$0")/.."
-: "${ANDROID_HOME:?Set ANDROID_HOME to your Android SDK}"
-: "${KEYSTORE:?Set KEYSTORE to your private signing keystore path}"
-: "${KEY_ALIAS:?Set KEY_ALIAS to its alias}"
-if [[ -n "${KEYSTORE_PASSWORD_FILE:-}" ]]; then
-  [[ -r "$KEYSTORE_PASSWORD_FILE" ]] || { echo 'Password file is not readable' >&2; exit 1; }
-  PASSWORD_SOURCE="file:$KEYSTORE_PASSWORD_FILE"
-else
-  : "${KEYSTORE_PASSWORD:?Set KEYSTORE_PASSWORD or KEYSTORE_PASSWORD_FILE securely}"
-  PASSWORD_SOURCE="env:KEYSTORE_PASSWORD"
-fi
+: "${ANDROID_HOME:?Set ANDROID_HOME to your local Android SDK}"
+: "${KEYSTORE:?Set KEYSTORE to your private V2 signing keystore path}"
+: "${KEY_ALIAS:?Set KEY_ALIAS to the existing V2 key alias}"
+INPUT="${1:-app/build/outputs/apk/release/app-release-unsigned.apk}"
+OUTPUT="${2:-shiben-release.apk}"
+[[ -r "$INPUT" ]] || { echo 'Unsigned APK is missing' >&2; exit 1; }
+[[ -r "$KEYSTORE" ]] || { echo 'Local release keystore is missing' >&2; exit 1; }
 ALIGNED="$(mktemp "${TMPDIR:-/tmp}/shiben-aligned.XXXXXX.apk")"
 trap 'rm -f "$ALIGNED"' EXIT
-"$ANDROID_HOME/build-tools/35.0.0/zipalign" -f -p 4 app/build/outputs/apk/release/app-release-unsigned.apk "$ALIGNED"
-# apksigner first tries the store password for the private key. Passing one file
-# for both options would read two lines; our PKCS12 store uses one shared password.
-"$ANDROID_HOME/build-tools/35.0.0/apksigner" sign --ks "$KEYSTORE" --ks-key-alias "$KEY_ALIAS" --ks-pass "$PASSWORD_SOURCE" --out shiben-release.apk "$ALIGNED"
-"$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose --print-certs shiben-release.apk
+BT="$ANDROID_HOME/build-tools/35.0.0"
+"$BT/zipalign" -f -p 4 "$INPUT" "$ALIGNED"
+ARGS=(sign --ks "$KEYSTORE" --ks-key-alias "$KEY_ALIAS" --out "$OUTPUT")
+if [[ -n "${KEYSTORE_PASSWORD_FILE:-}" ]]; then
+  [[ -r "$KEYSTORE_PASSWORD_FILE" ]] || { echo 'Protected password file is not readable' >&2; exit 1; }
+  ARGS+=(--ks-pass "file:$KEYSTORE_PASSWORD_FILE")
+fi
+# No --ks-pass means apksigner prompts securely in the local terminal.
+"$BT/apksigner" "${ARGS[@]}" "$ALIGNED"
+"$BT/apksigner" verify --verbose --print-certs "$OUTPUT"
+"$BT/zipalign" -c -p 4 "$OUTPUT"
+printf '\nSigned APK: %s\nDo not upload the keystore or password. Keep the same V2 key for every update.\n' "$OUTPUT"
