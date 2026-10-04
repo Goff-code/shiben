@@ -32,7 +32,7 @@ for ((i=0;i<120;i++)); do
     adb -s "$SERIAL" shell wm density 320
     adb -s "$SERIAL" shell settings put global window_animation_scale 0
     adb -s "$SERIAL" shell settings put global transition_animation_scale 0
-    adb -s "$SERIAL" shell settings put global animator_duration_scale 0
+    adb -s "$SERIAL" shell settings put global animator_duration_scale 1
     adb -s "$SERIAL" shell svc bluetooth disable >/dev/null 2>&1 || true
     adb -s "$SERIAL" shell input keyevent 82
     printf 'Disposable cloud emulator ready: %s (%s)\n' "$SERIAL" "$AVD"
