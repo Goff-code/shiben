@@ -189,13 +189,13 @@ final class UiKit {
     static final class HomeRing extends Ring {
         HomeRing(Context c){super(c);}
         @Override protected void onDraw(Canvas c){
-            float side=Math.max(0,Math.min(Math.min(getWidth(),getHeight())-dp(getContext(),18),dp(getContext(),300))),cx=getWidth()/2f,cy=getHeight()/2f;
+            float side=Math.max(0,Math.min(Math.min(getWidth(),getHeight())-dp(getContext(),18),dp(getContext(),248))),cx=getWidth()/2f,cy=getHeight()/2f;
             if(side<8)return;float radius=side*.46f,stroke=Math.max(3,side*.034f);
             p.setShader(null);p.setStyle(Paint.Style.FILL);p.setColor(0x94FFFFFF);c.drawCircle(cx,cy,radius,p);
             p.setStyle(Paint.Style.STROKE);p.setStrokeWidth(stroke);p.setStrokeCap(Paint.Cap.ROUND);p.setColor(0xffDDE2E0);c.drawCircle(cx,cy,radius,p);
             p.setShader(new LinearGradient(cx-radius,cy-radius,cx+radius,cy+radius,color==TEAL?0xff056C73:color,color==TEAL?0xff239C88:color,Shader.TileMode.CLAMP));
             if(fraction>0)c.drawArc(new RectF(cx-radius,cy-radius,cx+radius,cy+radius),-90,(float)(fraction*360),false,p);p.setShader(null);
-            float y=cy-side*.23f;float leaf=side*.053f;p.setStyle(Paint.Style.FILL);p.setColor(color==TEAL?0xff208E77:color);Path sprout=new Path();sprout.moveTo(cx,y+leaf);sprout.cubicTo(cx-leaf*1.8f,y+leaf,cx-leaf*1.6f,y-leaf,cx-leaf*1.6f,y-leaf);sprout.cubicTo(cx,y-leaf,cx,y,cx,y+leaf);sprout.moveTo(cx,y+leaf*.4f);sprout.cubicTo(cx,y-leaf*1.5f,cx+leaf*1.7f,y-leaf*1.4f,cx+leaf*1.7f,y-leaf*1.4f);sprout.cubicTo(cx+leaf*1.8f,y+leaf*.3f,cx+leaf*.5f,y+leaf*.6f,cx,y+leaf*.4f);c.drawPath(sprout,p);p.setStyle(Paint.Style.STROKE);p.setStrokeWidth(Math.max(1,side*.01f));c.drawLine(cx,y+leaf*.5f,cx,y+leaf*2,p);
+            float y=cy-side*.23f;float leaf=side*.033f;p.setStyle(Paint.Style.FILL);p.setColor(color==TEAL?0xff208E77:color);Path sprout=new Path();sprout.moveTo(cx,y+leaf);sprout.cubicTo(cx-leaf*1.8f,y+leaf,cx-leaf*1.6f,y-leaf,cx-leaf*1.6f,y-leaf);sprout.cubicTo(cx,y-leaf,cx,y,cx,y+leaf);sprout.moveTo(cx,y+leaf*.4f);sprout.cubicTo(cx,y-leaf*1.5f,cx+leaf*1.7f,y-leaf*1.4f,cx+leaf*1.7f,y-leaf*1.4f);sprout.cubicTo(cx+leaf*1.8f,y+leaf*.3f,cx+leaf*.5f,y+leaf*.6f,cx,y+leaf*.4f);c.drawPath(sprout,p);p.setStyle(Paint.Style.STROKE);p.setStrokeWidth(Math.max(1,side*.01f));c.drawLine(cx,y+leaf*.5f,cx,y+leaf*2,p);
             p.setStyle(Paint.Style.FILL);p.setTypeface(Typeface.create("sans-serif-medium",Typeface.NORMAL));p.setTextAlign(Paint.Align.CENTER);p.setColor(INK);p.setTextSize(side*(main.length()>6?.17f:.22f));c.drawText(main,cx,cy+side*.09f,p);
             if(side>=dp(getContext(),155)){p.setTypeface(Typeface.create("sans-serif",Typeface.NORMAL));p.setTextSize(Math.min(dp(getContext(),12),side*.053f));p.setColor(MUTED);c.drawText(subtitle.isEmpty()?"专注，遇见更好的自己":subtitle,cx,cy+side*.21f,p);}
         }
