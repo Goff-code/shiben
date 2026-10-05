@@ -13,4 +13,6 @@
 <style name="ShibenDialogNegative" parent="android:style/Widget.Material.Button.Borderless">
 <item name="android:textColor">#086C72</item><item name="android:textAllCaps">false</item><item name="android:minHeight">48dp</item>
 </style>
+<style name="ShibenDangerDialog" parent="ShibenDialog"><item name="android:buttonBarPositiveButtonStyle">@style/ShibenDangerPositive</item></style>
+<style name="ShibenDangerPositive" parent="ShibenDialogPositive"><item name="android:background">@drawable/dialog_danger</item></style>
 </resources>
