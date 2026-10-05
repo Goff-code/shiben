@@ -4,10 +4,10 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 source scripts/cloud-env.sh
 API=${SHIBEN_EMULATOR_API:-29}
-AVD="shiben-v2-api$API"
+AVD=${SHIBEN_EMULATOR_AVD:-"shiben-v2-api$API"}
 PORT=${SHIBEN_EMULATOR_PORT:-5554}
 SERIAL="emulator-$PORT"
-LOG_DIR="$PWD/artifacts/v2/api$API"
+LOG_DIR=${SHIBEN_EMULATOR_LOG_DIR:-"$PWD/artifacts/v2/api$API"}
 mkdir -p "$LOG_DIR"
 if [[ ! -f "$ANDROID_AVD_HOME/$AVD.avd/config.ini" ]]; then
   printf 'no\n' | avdmanager create avd --name "$AVD" --package "system-images;android-$API;default;x86_64" --device pixel_2
@@ -22,19 +22,19 @@ fi
 adb start-server >/dev/null
 if ! adb -s "$SERIAL" get-state >/dev/null 2>&1; then
   nohup emulator -avd "$AVD" -port "$PORT" -no-window -no-audio -no-boot-anim -no-metrics -show-kernel \
-    -no-snapshot -accel off -gpu swiftshader_indirect -memory 2048 -cores 4 \
+    -no-snapshot -accel off -gpu swiftshader_indirect -memory "${SHIBEN_EMULATOR_MEMORY:-2048}" -cores "${SHIBEN_EMULATOR_CORES:-4}" \
     -camera-back none -camera-front none > "$LOG_DIR/emulator.log" 2>&1 &
   echo $! > "$LOG_DIR/emulator.pid"
 fi
 for ((i=0;i<120;i++)); do
-  if [[ "$(adb -s "$SERIAL" shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" == 1 ]]; then
-    adb -s "$SERIAL" shell wm size 720x1280
-    adb -s "$SERIAL" shell wm density 320
-    adb -s "$SERIAL" shell settings put global window_animation_scale 0
-    adb -s "$SERIAL" shell settings put global transition_animation_scale 0
-    adb -s "$SERIAL" shell settings put global animator_duration_scale 1
-    adb -s "$SERIAL" shell svc bluetooth disable >/dev/null 2>&1 || true
-    adb -s "$SERIAL" shell input keyevent 82
+  if [[ "$(adb -s "$SERIAL" shell -n getprop sys.boot_completed 2>/dev/null | tr -d '\r')" == 1 ]]; then
+    adb -s "$SERIAL" shell -n wm size 720x1280
+    adb -s "$SERIAL" shell -n wm density 320
+    adb -s "$SERIAL" shell -n settings put global window_animation_scale 0
+    adb -s "$SERIAL" shell -n settings put global transition_animation_scale 0
+    adb -s "$SERIAL" shell -n settings put global animator_duration_scale 1
+    timeout 15 "$ANDROID_HOME/platform-tools/adb" -s "$SERIAL" shell -n svc bluetooth disable >/dev/null 2>&1 || true
+    adb -s "$SERIAL" shell -n input keyevent 82
     printf 'Disposable cloud emulator ready: %s (%s)\n' "$SERIAL" "$AVD"
     exit 0
   fi

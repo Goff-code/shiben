@@ -9,7 +9,9 @@ import xml.etree.ElementTree as ET
 before, after = map(Path, sys.argv[1:3])
 
 def tables(root):
-    db = sqlite3.connect(root / 'databases/focus-ledger.db')
+    path = root / 'databases/focus-ledger.db'
+    assert path.is_file(), f'missing captured database: {path}'
+    db = sqlite3.connect(path)
     result = {}
     for (name,) in db.execute("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name"):
         if name == 'timer_state':
@@ -21,6 +23,8 @@ def tables(root):
     db.close()
     return result
 left, right = tables(before), tables(after)
+required = {'android_metadata', 'projects', 'tasks', 'task_checks', 'sessions', 'daily_snapshots', 'daily_task_snapshots'}
+assert required.issubset(left) and required.issubset(right), 'captured database does not contain the expected application tables'
 assert left.keys() == right.keys(), 'database table set changed'
 for name in left:
     assert left[name] == right[name], 'row content changed across package update: ' + name
