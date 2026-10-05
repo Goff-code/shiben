@@ -23,6 +23,7 @@ public final class LedgerInstrumentation extends Instrumentation {
     @Override public void callActivityOnResume(Activity a){super.callActivityOnResume(a);screen=a;}
     @Override public void onStart(){Bundle result=new Bundle();try{
         context=getTargetContext();
+        if("attention_history".equals(suite)){runAttentionHistoryUi();result.putString("stream",log+"\nOK ("+passed+" checks)\n");result.putInt("checks",passed);finish(Activity.RESULT_OK,result);return;}
         if("attention_store".equals(suite)){DailyArchive.get(context);AttentionV202Instrumentation.run(context,name->check(true,name));result.putString("stream",log+"\nOK ("+passed+" checks)\n");result.putInt("checks",passed);finish(Activity.RESULT_OK,result);return;}
         if("attention".equals(suite)||"attention_layout".equals(suite)){
             DailyArchive.get(context);
@@ -178,6 +179,35 @@ public final class LedgerInstrumentation extends Instrumentation {
         StoreV2Instrumentation.run(context,name->check(true,name));
         result.putString("stream",log+"\nOK ("+passed+" checks)\n");result.putInt("checks",passed);finish(Activity.RESULT_OK,result);
     }catch(Throwable error){result.putString("stream",log+"FAIL "+error+"\n"+android.util.Log.getStackTraceString(error));try{screenshot("99-failure");}catch(Throwable ignored){}finish(Activity.RESULT_CANCELED,result);}}
+    private void runAttentionHistoryUi()throws Exception {
+        timer=TimerCoordinator.get(context);store=timer.store();LocalDate today=LocalDate.now(),past=today.minusDays(7);
+        check(store.getTasks(today).isEmpty()&&store.getSessions().isEmpty()&&!timer.engine().isActive(),
+                "historical attention UI uses a fresh disposable fixture");
+        LedgerStore.Task task=store.saveSimpleTask("补记产生的历史任务",40,1);
+        screen=startActivitySync(new Intent(context,MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));idle();
+        tab("今日");desc("更多");desc("补记注意力时长");manualPickDate(past);manualPickTime(10,25);manualSetDuration("0","35");click("保存补记");
+        LedgerStore.DaySnapshot history=store.getDaySnapshot(past);
+        check(!history.completeSnapshot&&Double.isNaN(history.totalProgress)&&"未知".equals(history.settlementGrade)
+                        &&history.totalActualMs==2100000&&history.totalManualMs==2100000,
+                "native backfill creates known attention evidence without fabricating historical completion or grade");
+        desc("历史记录");check(has("历史快照不完整：任务进度与优先级可能未知"),
+                "newly backfilled history card uses neutral incomplete-snapshot wording");
+        checkScreenFit("backfilled-history-list");screenshot("52-attention-history-incomplete");
+        desc(past+"，当日进度");check(has("该日期未保存完整任务快照。未知进度与优先级不会被推算。"),
+                "actual historical detail explains missing metadata without incorrectly attributing it to an old app version");
+        check(has("未知")&&!has("调整等级")&&has("补记产生的历史任务"),
+                "incomplete historical detail shows unknown settlement and frozen task name without a grade editor");
+        runOnMainSync(()->{UiKit.Ring ring=findType(UiKit.Ring.class);check(ring!=null&&"未知".equals(ring.main),
+                "historical detail ring renders unknown progress instead of inventing zero percent");});
+        check(field("detailSummary",TextView.class).getText().toString().contains("35 分 0 秒")
+                        &&"实际注意力合计  35 分 0 秒".equals(field("detailTotal",TextView.class).getText().toString()),
+                "incomplete historical detail still renders the known 35-minute actual attention total");
+        checkScreenFit("backfilled-history-detail");screenshot("53-attention-history-detail");reveal("实际注意力合计  35 分 0 秒");
+        checkControlVisible("实际注意力合计  35 分 0 秒","historical known-time total");screenshot("54-attention-history-known-time");
+        check(progress(task.id)==40&&store.getDaySnapshot(past).items.get(0).progress==-1,
+                "viewing backfilled history leaves current 40-percent and unknown past progress unchanged");
+        check(geometryFailures.isEmpty(),"historical attention controls have no layout failures: "+geometryFailures);
+    }
     /** Runs only after an explicit fresh disposable-emulator precondition. */
     private void runAttentionUi(boolean layoutOnly)throws Exception {
         timer=TimerCoordinator.get(context);store=timer.store();LocalDate today=LocalDate.now(),yesterday=today.minusDays(1);
