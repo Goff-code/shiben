@@ -66,6 +66,15 @@ public class V2ReportsTest {
         assertEquals("<100%", V2Reports.totalPercent(snapshot(Collections.singletonList(task("未完成",1,99,1,0,false)),100,true)));
         assertEquals("100%", V2Reports.totalPercent(snapshot(Collections.singletonList(task("已完成",1,100,1,0,false)),100,true)));
     }
+    @Test public void totalDisplayNeverRoundsAcrossAnySettlementBoundary() {
+        List<LedgerStore.DayTask> rows=Collections.singletonList(task("任务",1,93,1,0,false));
+        assertEquals("93.99%",V2Reports.totalPercent(snapshot(rows,93.999,true)));
+        assertEquals("96.99%",V2Reports.totalPercent(snapshot(rows,96.999,true)));
+        assertEquals("93.96%",V2Reports.totalPercent(snapshot(rows,93.96,true)));
+        assertEquals("65.37%",V2Reports.totalPercent(snapshot(rows,65.375,true)));
+        assertEquals("65%",V2Reports.totalPercent(snapshot(rows,65,true)));
+        assertEquals("0%",V2Reports.totalPercent(snapshot(rows,0,true)));
+    }
     @Test public void fractionWeightFormatsAndUnknownStaysUnknown() {
         assertEquals("40.00%",V2Reports.weight(.4)); assertEquals("<0.01%",V2Reports.weight(.00001)); assertEquals("未知",V2Reports.weight(Double.NaN));
     }

@@ -76,14 +76,13 @@ public final class V2Reports {
                 : String.format(Locale.ROOT, "%.1f%%", bounded);
     }
 
-    /** Never display a rounded 100% while a known active task is still incomplete. */
+    /** Truncate to two decimals so the displayed progress never crosses a grade threshold early. */
     public static String totalPercent(LedgerStore.DaySnapshot snapshot) {
         if (!Double.isFinite(snapshot.totalProgress)) return "未知";
         if (snapshot.genuineCompletion) return "100%";
         if (snapshot.totalProgress >= 100) return "<100%";
-        if (snapshot.totalProgress >= 99.9) return java.math.BigDecimal.valueOf(snapshot.totalProgress)
+        return java.math.BigDecimal.valueOf(Math.max(0, snapshot.totalProgress))
                 .setScale(2, java.math.RoundingMode.DOWN).stripTrailingZeros().toPlainString() + "%";
-        return percent(snapshot.totalProgress);
     }
 
     public static String taskProgress(int value) { return value < 0 ? "未知" : percent(value); }

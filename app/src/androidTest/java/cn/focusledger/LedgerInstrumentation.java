@@ -254,8 +254,28 @@ public final class LedgerInstrumentation extends Instrumentation {
         desc("补记注意力时长");check("0".equals(field("manualHoursInput",EditText.class).getText().toString())
                         &&"30".equals(field("manualMinutesInput",EditText.class).getText().toString()),
                 "reopening after discard resets hours and minutes rather than leaking cancelled values");click("取消");
+        attentionDstDraftChecks();
         attentionTimerChecks(task.id,today);
         check(geometryFailures.isEmpty(),"attention UI has no native layout failures: "+geometryFailures);
+    }
+    private void attentionDstDraftChecks()throws Exception {
+        int before=store.getSessions().size();desc("补记注意力时长");
+        runOnMainSync(()->{try{Field zone=MainActivity.class.getDeclaredField("manualZone");zone.setAccessible(true);zone.set(screen,"America/New_York");}catch(Exception e){throw new RuntimeException(e);}});
+        manualPickDate(LocalDate.of(2025,3,9));manualPickTime(2,30);manualSetDuration("0","30");click("保存补记");
+        check(manualErrorContains("夏令时")&&store.getSessions().size()==before,
+                "native manual validation rejects nonexistent spring-DST local time without creating a session");
+        manualPickDate(LocalDate.of(2025,11,2));manualPickTime(1,30);
+        check(field("manualHint",TextView.class).getText().toString().contains("第一次（UTC-04:00）"),
+                "ambiguous fall-DST draft explicitly identifies the first occurrence and UTC offset");
+        final ZonedDateTime[] selected={null};runOnMainSync(()->{try{java.lang.reflect.Method start=MainActivity.class.getDeclaredMethod("manualStart");start.setAccessible(true);selected[0]=(ZonedDateTime)start.invoke(screen);}catch(Exception e){throw new RuntimeException(e);}});
+        check(selected[0].toInstant().equals(Instant.parse("2025-11-02T05:30:00Z"))&&selected[0].getOffset().equals(ZoneOffset.ofHours(-4)),
+                "fall-DST manual start resolves to the first actual 01:30 occurrence, not a duplicate interval");
+        check(selected[0].plus(Duration.ofMinutes(30)).toInstant().equals(Instant.parse("2025-11-02T06:00:00Z")),
+                "manual duration stays 30 actual minutes while the fall-DST wall clock repeats");
+        String identity=field("manualSessionId",String.class);recreate();
+        check("America/New_York".equals(field("manualZone",String.class))&&identity.equals(field("manualSessionId",String.class)),
+                "manual draft recreation freezes its original time zone and deduplication identity");
+        discardManual();check(store.getSessions().size()==before,"cancelled DST validation drafts leave session ledger unchanged");
     }
     private void attentionTimerChecks(String taskId,LocalDate today)throws Exception {
         tab("专注");click("开始专注");SystemClock.sleep(1200);tab("今日");
@@ -272,6 +292,25 @@ public final class LedgerInstrumentation extends Instrumentation {
         List<LedgerStore.DaySnapshot> captured=timer.snapshotsForDays(Arrays.asList(today,today.minusDays(1)));
         check(captured.get(0).totalActualMs==paused&&captured.get(1).totalActualMs==4620000,
                 "multi-day snapshot uses the same paused live time and preserves historical manual totals");
+        java.util.concurrent.CountDownLatch exported=new java.util.concurrent.CountDownLatch(1);
+        ExportWorker worker=ExportWorker.get(context);
+        ExportWorker.Job job=worker.start(new ExportWorker.Request(V2Reports.DateRange.day(today),ExportWorker.Format.MARKDOWN),
+                update->{if(update.isTerminal())exported.countDown();});
+        check(exported.await(90,java.util.concurrent.TimeUnit.SECONDS),"real Markdown export of paused active timer finishes within timeout");
+        worker.detach(job.id);check(job.state==ExportWorker.State.SUCCEEDED&&job.result!=null,
+                "real paused-timer ExportWorker job succeeds: "+job.error);
+        String markdown=new String(java.nio.file.Files.readAllBytes(job.result.file.toPath()),java.nio.charset.StandardCharsets.UTF_8);
+        check(markdown.contains("## 今日投资注意力时长总计\n"+V2Reports.duration(paused)+"\n")
+                        &&markdown.contains("## 当日结算等级\nSSS+\n"),
+                "actual exported Markdown contains exactly the same paused attention total and chosen SSS+ grade");
+        final String[] uiDuration={null};runOnMainSync(()->uiDuration[0]=field("attentionTotal",TextView.class).getText().toString());
+        long seconds=paused/1000,minutes=seconds/60;
+        String expectedUi=(minutes>=60?minutes/60+"小时":"")+minutes%60+"分"+seconds%60+"秒";
+        check(expectedUi.equals(uiDuration[0])&&timer.snapshotForDay(today).totalActualMs==paused&&store.getSessions().size()==savedCount,
+                "native Today text and exported live snapshot agree without creating a saved session");
+        File evidence=new File(context.getFilesDir(),"qa-v2");evidence.mkdirs();
+        java.nio.file.Files.copy(job.result.file.toPath(),new File(evidence,"51-attention-paused-live-export.md").toPath(),java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+        screenshot("51-attention-paused-live-export");
         desc("更多");desc("补记注意力时长");check(!has("保存补记")&&timer.engine().isPaused(),"paused active timer also blocks manual entry");
         tab("专注");click("结束");click("结束并保存");tab("今日");
         check(store.getSessions().size()==savedCount+1&&timer.snapshotForDay(today).totalActualMs==paused,
