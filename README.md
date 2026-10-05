@@ -26,12 +26,12 @@ python3 tests/branding/check.py .
 python3 scripts/check-unsigned-apk.py app/build/outputs/apk/release/app-release-unsigned.apk
 ```
 
-云端隔离工具可使用 `scripts/build-cloud.sh`。测试运行器与设备验证见 `docs/TEST_REPORT_V2.md`；旧版测试报告不代表V2结果。设计参考见 `docs/design/v2`，实际截图另行交付。
+云端隔离工具可使用 `scripts/build-cloud.sh`。当前验收见 `docs/TEST_REPORT_2.0.2.md`，运行器历史说明见 `docs/TEST_REPORT_V2.md`；较早版本报告不替代本次结果。设计参考见 `docs/design/v2`，实际截图另行交付。
 
 ## 安装与签名
 
 安装身份保持 `cn.goff.shiben`；2.0.2 / code5 / min26 / target35。release 默认未签名。
 
-旧版签名已丢失。本次正式密钥已在用户 Mac 本机创建、保管并完成正式包签名；云端没有收到私钥或密码。公开证书保存在 `docs/SHIBEN_V2_RELEASE_CERTIFICATE.pem`，正式包核验见 `docs/RELEASE_V2_VERIFICATION.md`。云端 debug 仅测试。V3 必须相同包名+V2相同正式证书+更大versionCode覆盖升级。2.0.2 的非破坏迁移与每日文件格式变更见 `docs/UPGRADE_2.0.2.md`。详情见 `docs/INSTALL_AND_BACKUP.md`、`docs/SIGNING_KEY_RECOVERY.md`。不要上传私钥或密码。
+既有 V2 正式密钥由用户 Mac 本机保管；云端没有收到私钥或密码。公开证书保存在 `docs/SHIBEN_V2_RELEASE_CERTIFICATE.pem`。2.0.2 的正式签名和同证书覆盖升级状态见 `docs/TEST_REPORT_2.0.2.md`，既有签名记录见 `docs/RELEASE_V2_VERIFICATION.md`。云端 debug 仅测试；2.0.2 及未来版本必须保持相同包名、V2 正式证书和更大的 versionCode。2.0.2 的非破坏迁移与每日文件格式变更见 `docs/UPGRADE_2.0.2.md`。详情见 `docs/INSTALL_AND_BACKUP.md`、`docs/SIGNING_KEY_RECOVERY.md`。不要上传私钥或密码。
 
 计时使用单调时钟，暂停不计入；重启只保留已保存检查点。精确提醒权限、通知渠道与手机后台限制影响提醒。realme GT6 / UI7.0 须真机验证。
