@@ -32,7 +32,7 @@ mkdir -p "$TEMP/classes" "$TEMP/dex"
 sha256sum "$OUTPUT"
 printf '\nCompiled only; not run. On the authorized disposable emulator:\n'
 printf '  adb push %s /data/local/tmp/\n' "${OUTPUT#"$ROOT"/}"
-printf '  adb shell uiautomator runtest /data/local/tmp/official-ui-qa.jar -c cn.focusledger.qa.OfficialUpgradeUi -e mode seed\n'
+printf '  adb shell uiautomator runtest /system/framework/android.test.base.jar /data/local/tmp/official-ui-qa.jar -c cn.focusledger.qa.OfficialUpgradeUi -e mode seed\n'
 printf '  # Install the same-certificate official code4 APK externally with adb install -r.\n'
-printf '  adb shell uiautomator runtest /data/local/tmp/official-ui-qa.jar -c cn.focusledger.qa.OfficialUpgradeUi -e mode verify\n'
+printf '  adb shell uiautomator runtest /system/framework/android.test.base.jar /data/local/tmp/official-ui-qa.jar -c cn.focusledger.qa.OfficialUpgradeUi -e mode verify\n'
 printf '  adb pull /data/local/tmp/shiben-official-upgrade\n'

@@ -32,14 +32,16 @@ import java.util.regex.Pattern;
  * Upgrade externally with the official same-certificate code4 APK, then verify.
  *
  * adb push artifacts/v2.0.1/runtime/official-ui-qa.jar /data/local/tmp/
- * adb shell uiautomator runtest /data/local/tmp/official-ui-qa.jar \
+ * adb shell uiautomator runtest /system/framework/android.test.base.jar /data/local/tmp/official-ui-qa.jar \
  *   -c cn.focusledger.qa.OfficialUpgradeUi -e mode seed
- * adb shell uiautomator runtest /data/local/tmp/official-ui-qa.jar \
+ * adb shell uiautomator runtest /system/framework/android.test.base.jar /data/local/tmp/official-ui-qa.jar \
  *   -c cn.focusledger.qa.OfficialUpgradeUi -e mode verify
  * adb pull /data/local/tmp/shiben-official-upgrade
  *
  * Optional parameters: dir (evidence directory), baseline (properties path),
  * alpha / beta (distinct ASCII task names), session_ms (2000..120000).
+ * resume_created_tasks=true is only for an evidenced interrupted seed with
+ * exactly the original two zero-progress tasks, no session/timer, no baseline.
  * Seed refuses to overwrite a completed baseline or reuse its task names.
  * Verify only navigates/reads: it never resumes/ends a timer or changes settings.
  * Both phases must run on the same device and same local calendar day.
@@ -123,10 +125,20 @@ public final class OfficialUpgradeUi extends UiAutomatorTestCase {
         assertFalse("An existing timer is active; refusing to change it", object(text("暂停")).exists());
         assertFalse("An existing timer is paused; refusing to change it", object(text("已暂停")).exists());
         tab("任务");
-        assertFalse("Seed task already exists: " + alpha, existsWithScroll(taskSelector(alpha)));
-        assertFalse("Seed task already exists: " + beta, existsWithScroll(taskSelector(beta)));
-        addTask(alpha);
-        addTask(beta);
+        if (Boolean.parseBoolean(parameters.getString("resume_created_tasks", "false"))) {
+            // Explicit recovery only after evidence proves the preceding attempt
+            // stopped immediately after creating these two zero-progress tasks.
+            assertEquals("Resume requires the existing alpha task at zero", 0,
+                    progress(must(taskSelector(alpha)).getContentDescription()));
+            assertEquals("Resume requires the existing beta task at zero", 0,
+                    progress(must(taskSelector(beta)).getContentDescription()));
+            note("Resuming the two existing zero-progress seed tasks without deleting or recreating them");
+        } else {
+            assertFalse("Seed task already exists: " + alpha, existsWithScroll(taskSelector(alpha)));
+            assertFalse("Seed task already exists: " + beta, existsWithScroll(taskSelector(beta)));
+            addTask(alpha);
+            addTask(beta);
+        }
         tap(taskSelector(alpha));
         must(text("调整任务进度"));
         UiObject seek = must(new UiSelector().packageName(PACKAGE).className("android.widget.SeekBar"));
@@ -240,7 +252,7 @@ public final class OfficialUpgradeUi extends UiAutomatorTestCase {
         UiSelector selector = description(label).className("android.widget.Switch");
         UiObject control = must(selector);
         if (control.isChecked()) {
-            assertTrue("Could not toggle " + label, control.click());
+            dispatchClick(control, "toggle " + label);
             settle();
         }
         assertFalse(label + " must be disabled", must(selector).isChecked());
@@ -339,7 +351,7 @@ public final class OfficialUpgradeUi extends UiAutomatorTestCase {
     private void tab(String name) throws Exception {
         UiObject target = waitForAny("Missing exact tab description after 30 seconds: " + name,
                 description(name), description(name + "，已选中"));
-        assertTrue("Could not tap tab " + name, target.click());
+        dispatchClick(target, "tab " + name);
         settle();
         must(description(name + "，已选中"));
     }
@@ -393,8 +405,15 @@ public final class OfficialUpgradeUi extends UiAutomatorTestCase {
     }
 
     private void tap(UiSelector selector) throws Exception {
-        assertTrue("Could not click " + selector, must(selector).click());
+        dispatchClick(must(selector), selector.toString());
         settle();
+    }
+
+    private void dispatchClick(UiObject target, String description) throws UiObjectNotFoundException {
+        // Android 35's legacy driver can return false after the tap has already
+        // opened/dismissed a window. The following mandatory UI-state assertions
+        // establish success; a dispatch return value does not establish it.
+        if (!target.click()) note("DRIVER: click returned false; requiring subsequent UI state for " + description);
     }
 
     private void settle() throws UiObjectNotFoundException {
@@ -418,7 +437,8 @@ public final class OfficialUpgradeUi extends UiAutomatorTestCase {
                 .textMatches("(?i)wait"));
         assertTrue("Known System UI ANR has no Wait action; refusing any other action",
                 wait.waitForExists(1000));
-        assertTrue("Could not select Wait for the exact System UI ANR", wait.click());
+        dispatchClick(wait, "Wait for exact System UI ANR");
+        assertTrue("Exact System UI ANR did not dismiss after Wait", title.waitUntilGone(5000));
         note("ENV: selected Wait for software-emulator overlay: " + exactTitle);
         sleep(350);
     }
