@@ -31,6 +31,7 @@ import java.util.HashSet;
 import java.util.Set;
 import java.util.TreeSet;
 import java.util.UUID;
+import java.util.concurrent.CancellationException;
 
 /** All app data stays in this app-private SQLite database. */
 public final class LedgerStore extends SQLiteOpenHelper {
@@ -190,6 +191,102 @@ public final class LedgerStore extends SQLiteOpenHelper {
             }
             return hasActive;
         }
+    }
+
+    /** Immutable export input. No database, store or coordinator is retained during materialization. */
+    public static final class CapturedDays {
+        private final List<LocalDate> days;
+        private final Set<LocalDate> selectedDays;
+        private final Map<LocalDate, CapturedHeader> headers;
+        private final Map<LocalDate, List<DayTask>> tasks;
+        private final List<byte[]> sessionRecords;
+        private final Session activePreview;
+
+        private CapturedDays(List<LocalDate> days, Map<LocalDate, CapturedHeader> headers,
+                             Map<LocalDate, List<DayTask>> tasks, List<byte[]> sessionRecords,
+                             Session activePreview) {
+            this.days = Collections.unmodifiableList(new ArrayList<>(days));
+            this.selectedDays = Collections.unmodifiableSet(new HashSet<>(days));
+            this.headers = Collections.unmodifiableMap(new HashMap<>(headers));
+            Map<LocalDate, List<DayTask>> frozenTasks = new HashMap<>();
+            for (Map.Entry<LocalDate, List<DayTask>> entry : tasks.entrySet())
+                frozenTasks.put(entry.getKey(), Collections.unmodifiableList(new ArrayList<>(entry.getValue())));
+            this.tasks = Collections.unmodifiableMap(frozenTasks);
+            // Each byte array is freshly owned by Cursor.getBlob and never exposed or modified.
+            this.sessionRecords = Collections.unmodifiableList(new ArrayList<>(sessionRecords));
+            this.activePreview = activePreview;
+        }
+
+        public List<DaySnapshot> materialize() { return materialize(null); }
+
+        /** Call outside all shared monitors; each durable session is deserialized and day-split once. */
+        public List<DaySnapshot> materialize(Runnable cancellationCheck) {
+            checkCancelled(cancellationCheck);
+            Map<LocalDate, CapturedFocus> focusByDay = new HashMap<>();
+            for (byte[] record : sessionRecords) {
+                checkCancelled(cancellationCheck);
+                addFocus(deserialize(record, Session.class), focusByDay, cancellationCheck);
+            }
+            if (activePreview != null) addFocus(activePreview, focusByDay, cancellationCheck);
+            List<DaySnapshot> result = new ArrayList<>(days.size());
+            for (LocalDate day : days) {
+                checkCancelled(cancellationCheck);
+                CapturedHeader header = headers.get(day);
+                boolean complete = header != null && header.complete;
+                CapturedFocus focus = focusByDay.get(day);
+                List<DayTask> items = new ArrayList<>();
+                boolean previewTaskPresent = false;
+                double total = complete ? 0d : Double.NaN;
+                for (DayTask row : tasks.getOrDefault(day, Collections.emptyList())) {
+                    checkCancelled(cancellationCheck);
+                    if (activePreview != null && row.taskId.equals(activePreview.taskId)) previewTaskPresent = true;
+                    long actual = focus == null ? 0L : focus.byTask.getOrDefault(row.taskId, 0L);
+                    items.add(new DayTask(row.taskId, row.title, row.rank, row.progress, row.weight,
+                            actual, row.archived, row.legacyDone));
+                    if (!row.archived) total += row.progress < 0 || row.rank < 1
+                            ? Double.NaN : row.progress * row.weight;
+                }
+                if (activePreview != null && !previewTaskPresent && focus != null
+                        && focus.byTask.getOrDefault(activePreview.taskId, 0L) > 0L) {
+                    items.add(new DayTask(activePreview.taskId, activePreview.taskTitle, -1, -1,
+                            Double.NaN, focus.byTask.get(activePreview.taskId), complete, null));
+                }
+                result.add(new DaySnapshot(day, items, total, complete, focus == null ? 0L : focus.total,
+                        header == null ? null : header.grade, focus == null ? 0L : focus.manual));
+            }
+            return Collections.unmodifiableList(result);
+        }
+
+        private void addFocus(Session session, Map<LocalDate, CapturedFocus> focusByDay,
+                              Runnable cancellationCheck) {
+            checkCancelled(cancellationCheck);
+            for (Map.Entry<LocalDate, Long> entry : DailyTotals.totalsByDay(session).entrySet()) {
+                checkCancelled(cancellationCheck);
+                if (!selectedDays.contains(entry.getKey()) || entry.getValue() <= 0L) continue;
+                CapturedFocus focus = focusByDay.get(entry.getKey());
+                if (focus == null) { focus = new CapturedFocus(); focusByDay.put(entry.getKey(), focus); }
+                long actual = entry.getValue();
+                focus.byTask.put(session.taskId, Math.addExact(focus.byTask.getOrDefault(session.taskId, 0L), actual));
+                focus.total = Math.addExact(focus.total, actual);
+                if (session.manual) focus.manual = Math.addExact(focus.manual, actual);
+            }
+        }
+    }
+
+    private static final class CapturedHeader {
+        final boolean complete;
+        final String grade;
+        CapturedHeader(boolean complete, String grade) { this.complete = complete; this.grade = grade; }
+    }
+
+    private static final class CapturedFocus {
+        final Map<String, Long> byTask = new HashMap<>();
+        long total, manual;
+    }
+
+    private static void checkCancelled(Runnable cancellationCheck) {
+        if (Thread.currentThread().isInterrupted()) throw new CancellationException("已取消导出");
+        if (cancellationCheck != null) cancellationCheck.run();
     }
 
     public LedgerStore(Context context) {
@@ -678,6 +775,67 @@ public final class LedgerStore extends SQLiteOpenHelper {
                     focus.get(activeSession.taskId), complete, null));
         }
         return new DaySnapshot(day, items, total, complete, totalFocus, settlementOverride, totalManual);
+    }
+
+    /**
+     * Atomically copies export inputs without changing records or decoding historical session blobs.
+     * The caller should establish today's header before capturing if needed, then release its own
+     * coordinator monitor before invoking materialize. Only the raw-copy phase holds locks.
+     */
+    public synchronized CapturedDays captureDays(List<LocalDate> days, Session activePreview,
+                                                Runnable cancellationCheck) {
+        if (days == null) throw new IllegalArgumentException("日期不能为空");
+        List<LocalDate> orderedDays = new ArrayList<>(days);
+        for (LocalDate day : orderedDays) if (day == null) throw new IllegalArgumentException("日期不能为空");
+        Set<LocalDate> selected = new HashSet<>(orderedDays);
+        Map<LocalDate, CapturedHeader> headers = new HashMap<>();
+        Map<LocalDate, List<DayTask>> tasks = new HashMap<>();
+        List<byte[]> records = new ArrayList<>();
+        checkCancelled(cancellationCheck);
+        if (selected.isEmpty()) return new CapturedDays(orderedDays, headers, tasks, records, null);
+        SQLiteDatabase db = getReadableDatabase();
+        boolean previewStored = false;
+        // WAL lets existing readers continue. A short transaction also protects against another
+        // LedgerStore instance changing rows between the three copy queries. No writes occur here.
+        db.beginTransactionNonExclusive();
+        try {
+            try (Cursor c = db.query("daily_snapshots", new String[]{"day", "complete", "settlement_grade"},
+                    null, null, null, null, "day")) {
+                while (c.moveToNext()) {
+                    checkCancelled(cancellationCheck);
+                    LocalDate day = LocalDate.parse(c.getString(0));
+                    if (selected.contains(day)) headers.put(day,
+                            new CapturedHeader(c.getInt(1) != 0, c.isNull(2) ? null : c.getString(2)));
+                }
+            }
+            try (Cursor c = db.query("daily_task_snapshots", null, null, null, null, null,
+                    "day,archived,CASE WHEN rank IS NULL THEN 1 ELSE 0 END,rank,task_id")) {
+                while (c.moveToNext()) {
+                    checkCancelled(cancellationCheck);
+                    LocalDate day = LocalDate.parse(string(c, "day"));
+                    if (!selected.contains(day)) continue;
+                    int weightColumn = c.getColumnIndexOrThrow("weight");
+                    int doneColumn = c.getColumnIndexOrThrow("legacy_done");
+                    List<DayTask> items = tasks.get(day);
+                    if (items == null) { items = new ArrayList<>(); tasks.put(day, items); }
+                    items.add(new DayTask(string(c, "task_id"), string(c, "title"),
+                            nullableInt(c, "rank", -1), nullableInt(c, "progress", -1),
+                            c.isNull(weightColumn) ? Double.NaN : c.getDouble(weightColumn), 0L,
+                            integer(c, "archived") != 0, c.isNull(doneColumn) ? null : c.getInt(doneColumn) != 0));
+                }
+            }
+            // Read tombstone ids for preview dedup, but do not copy their potentially large blobs.
+            try (Cursor c = db.rawQuery("SELECT id,CASE WHEN deleted=0 THEN record ELSE NULL END FROM sessions", null)) {
+                while (c.moveToNext()) {
+                    checkCancelled(cancellationCheck);
+                    if (activePreview != null && activePreview.id.equals(c.getString(0))) previewStored = true;
+                    if (!c.isNull(1)) records.add(c.getBlob(1));
+                }
+            }
+            checkCancelled(cancellationCheck);
+            db.setTransactionSuccessful();
+        } finally { db.endTransaction(); }
+        return new CapturedDays(orderedDays, headers, tasks, records, previewStored ? null : activePreview);
     }
 
     /** Only the S family is selectable, and only while the recorded day is genuinely complete. */

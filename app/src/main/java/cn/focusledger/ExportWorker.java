@@ -157,7 +157,7 @@ public final class ExportWorker {
             if (days.isEmpty()) throw new IOException("所选日期范围内没有留存记录");
             // Capture every requested date once, using one active-timer reading for the whole export.
             // Later timer ticks or edits cannot change one page while another is being rendered.
-            List<LedgerStore.DaySnapshot> snapshots = TimerCoordinator.get(app).snapshotsForDays(days);
+            List<LedgerStore.DaySnapshot> snapshots = TimerCoordinator.get(app).snapshotsForDays(days, job::checkCancelled);
             job.total = snapshots.size();
             Result result = request.format == Format.MARKDOWN
                     ? generateMarkdown(request.range, snapshots, directory, job)

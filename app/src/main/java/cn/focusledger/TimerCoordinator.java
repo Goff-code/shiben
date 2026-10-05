@@ -13,8 +13,6 @@ import android.provider.Settings;
 import cn.focusledger.core.Session;
 import cn.focusledger.core.TimerEngine;
 import java.time.LocalDate;
-import java.util.ArrayList;
-import java.util.Collections;
 import java.util.List;
 
 /** Single-process authority. Every state transition and terminal record is persisted atomically. */
@@ -122,15 +120,19 @@ public final class TimerCoordinator {
     public synchronized LedgerStore.DaySnapshot snapshotForDay(LocalDate day) {
         synchronized (store) { return store.getDaySnapshot(day, projectActiveSession()); }
     }
-    /** Captures all selected days at one instant before background formatting begins. */
-    public synchronized List<LedgerStore.DaySnapshot> snapshotsForDays(List<LocalDate> days) {
+    /** One immutable report capture; expensive history decoding does not hold timer/UI locks. */
+    public List<LedgerStore.DaySnapshot> snapshotsForDays(List<LocalDate> days) {
+        return snapshotsForDays(days, () -> { });
+    }
+    public List<LedgerStore.DaySnapshot> snapshotsForDays(List<LocalDate> days, Runnable cancellationCheck) {
         if (days == null) throw new IllegalArgumentException("日期不能为空");
-        synchronized (store) {
-            Session active = projectActiveSession();
-            List<LedgerStore.DaySnapshot> snapshots = new ArrayList<>(days.size());
-            for (LocalDate day : days) snapshots.add(store.getDaySnapshot(day, active));
-            return Collections.unmodifiableList(snapshots);
+        Runnable check = cancellationCheck == null ? () -> { } : cancellationCheck;
+        LedgerStore.CapturedDays captured;
+        synchronized (this) {
+            check.run();
+            captured = store.captureDays(days, projectActiveSession(), check);
         }
+        return captured.materialize(check);
     }
     public synchronized long remainingMs() {
         TimerEngine.State state=engine.snapshot();

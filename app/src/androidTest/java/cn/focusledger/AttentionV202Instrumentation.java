@@ -30,6 +30,7 @@ final class AttentionV202Instrumentation {
         suite.attentionSources();
         suite.historicalNamesAndMidnight();
         suite.v2Migration();
+        suite.capturedBatch();
     }
     private void check(boolean value,String label) {
         if(!value)throw new AssertionError(label);
@@ -198,6 +199,66 @@ final class AttentionV202Instrumentation {
             try(Cursor rows=db.rawQuery("SELECT settlement_grade FROM daily_snapshots WHERE day=?",new String[]{past.toString()})) {
                 check(rows.moveToFirst()&&rows.isNull(0),"v2 migration adds an empty override rather than inventing user grade choices");
             }
+        }
+    }
+    private void capturedBatch() {
+        LocalDate today=LocalDate.now(),first=today.minusDays(3),second=first.plusDays(1);
+        ZoneId zone=ZoneId.systemDefault();
+        try(LedgerStore store=new LedgerStore(isolated("batch"))) {
+            LedgerStore.Task task=store.saveSimpleTask("批量捕获",100,1);
+            freezeCopy(store,today,first);freezeCopy(store,today,second);
+            store.setSettlementGrade(first,"SS");store.setSettlementGrade(second,"SSS+");
+            long morning=first.atTime(10,0).atZone(zone).toInstant().toEpochMilli();
+            Session original=Session.manual("batch-original",task.id,task.title,task.projectId,morning,600000,zone.getId(),false);
+            long midnight=first.atTime(23,50).atZone(zone).toInstant().toEpochMilli();
+            Session cross=Session.manual("batch-midnight",task.id,task.title,task.projectId,midnight,1200000,zone.getId(),false);
+            store.addManualSession(original);store.addManualSession(cross);
+            long live=second.atTime(12,0).atZone(zone).toInstant().toEpochMilli();
+            Session active=new Session("batch-preview",task.id,task.title,task.projectId,900000,42000,live,live+42000,
+                    Collections.singletonList(new Segment(live,live+42000,42000)),"report_preview",false,false,zone.getId());
+            LedgerStore.CapturedDays captured=store.captureDays(Arrays.asList(first,second,today),active,()->{});
+            store.setSettlementGrade(first,"S");store.setSettlementGrade(second,"SS");store.deleteSession(original.id);
+            store.setTaskProgress(task.id,40);
+            long later=second.atTime(8,0).atZone(zone).toInstant().toEpochMilli();
+            store.addManualSession(Session.manual("batch-later",task.id,task.title,task.projectId,later,1800000,zone.getId(),false));
+            int[] materializeChecks={0};
+            java.util.List<LedgerStore.DaySnapshot> frozen=captured.materialize(()->{materializeChecks[0]++;if(Thread.holdsLock(store))throw new AssertionError("heavy materialization holds the store monitor");});
+            check(materializeChecks[0]>0,"heavy materialization cancellation checkpoints execute outside the store lock");
+            check(frozen.size()==3&&frozen.get(0).day.equals(first)&&frozen.get(1).day.equals(second)&&frozen.get(2).day.equals(today),
+                    "batch capture materializes requested dates in stable order");
+            check(frozen.get(0).totalActualMs==1200000&&frozen.get(0).totalManualMs==1200000
+                            &&frozen.get(1).totalActualMs==642000&&frozen.get(1).totalManualMs==600000,
+                    "batch materialization uses one captured ledger and date-split active timer across days");
+            check("SS".equals(frozen.get(0).settlementGrade)&&"SSS+".equals(frozen.get(1).settlementGrade),
+                    "captured grades remain immutable after later per-day choices");
+            check(frozen.get(2).totalProgress==100&&"S".equals(frozen.get(2).settlementGrade)
+                            &&store.getDaySnapshot(today).totalProgress==40,
+                    "captured daily progress remains frozen after a later live progress edit");
+            check(store.getDaySnapshot(first).totalActualMs==600000&&store.getDaySnapshot(second).totalActualMs==2400000
+                            &&"S".equals(store.getDaySnapshot(first).settlementGrade),
+                    "later deletion, backfill and grade edits remain separate from captured export evidence");
+            java.util.List<LedgerStore.DaySnapshot> duplicate=store.captureDays(Arrays.asList(first,second),cross,()->{}).materialize(()->{});
+            check(duplicate.get(0).totalActualMs==600000&&duplicate.get(1).totalActualMs==2400000,
+                    "batch capture deduplicates a projected id that already exists as a durable session");
+            check(duplicate.get(0).totalActualMs==store.getDaySnapshot(first).totalActualMs
+                            &&duplicate.get(1).totalManualMs==store.getDaySnapshot(second).totalManualMs
+                            &&duplicate.get(1).settlementGrade.equals(store.getDaySnapshot(second).settlementGrade),
+                    "batch snapshot totals and grade equal individual-day snapshot results");
+            store.deleteSession(cross.id);
+            java.util.List<LedgerStore.DaySnapshot> tombstone=store.captureDays(Arrays.asList(first,second),cross,()->{}).materialize(()->{});
+            check(tombstone.get(0).totalActualMs==0&&tombstone.get(1).totalActualMs==1800000,
+                    "batch capture does not resurrect a tombstoned session through its preview");
+            boolean cancelled=false;
+            try{store.captureDays(Arrays.asList(first,second),active,()->{throw new java.util.concurrent.CancellationException("test capture cancellation");});}
+            catch(java.util.concurrent.CancellationException expected){cancelled=true;}
+            check(cancelled,"batch raw capture honors cancellation before further database work");
+            cancelled=false;
+            try{captured.materialize(()->{throw new java.util.concurrent.CancellationException("test materialization cancellation");});}
+            catch(java.util.concurrent.CancellationException expected){cancelled=true;}
+            check(cancelled,"off-lock batch materialization honors export cancellation");
+            java.util.List<LedgerStore.DaySnapshot> again=captured.materialize(()->{});
+            check(again.get(0).totalActualMs==1200000&&again.get(1).totalActualMs==642000&&store.getSessions().size()==1,
+                    "cancelled materialization neither corrupts immutable capture nor mutates session ledger");
         }
     }
     static void freezeCopy(LedgerStore store,LocalDate from,LocalDate to) {
