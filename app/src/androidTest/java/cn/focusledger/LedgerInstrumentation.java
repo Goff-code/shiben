@@ -87,6 +87,14 @@ public final class LedgerInstrumentation extends Instrumentation {
             check(geometryFailures.isEmpty(),"no text/card geometry failures: "+geometryFailures);
             result.putString("stream",log+"\nOK ("+passed+" checks)\n");result.putInt("checks",passed);finish(Activity.RESULT_OK,result);return;
         }
+        if ("home_layout".equals(suite)) {
+            screen=startActivitySync(new Intent(context,MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));idle();
+            timer=TimerCoordinator.get(context);check(!timer.engine().isActive(),"home layout diagnostic starts without an active timer");tab("专注");
+            checkHomeTextFit();screenshot("38-home-metrics-ready");click("开始专注");SystemClock.sleep(1200);click("暂停");waitFor("已暂停",10000);
+            checkHomeTextFit();screenshot("39-home-metrics-paused");click("结束");click("结束并保存");
+            check(geometryFailures.isEmpty(),"no home geometry failures: "+geometryFailures);
+            result.putString("stream",log+"\nOK ("+passed+" checks)\n");result.putInt("checks",passed);finish(Activity.RESULT_OK,result);return;
+        }
         if ("layout".equals(suite)) {
             screen=startActivitySync(new Intent(context,MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)); idle();
             final boolean[] clicked={false};
@@ -233,7 +241,14 @@ public final class LedgerInstrumentation extends Instrumentation {
         desc("导出记录");checkScreenFit("export");screenshot("07-visual-export");click("预览导出");waitFor("保存文件",60000);
         checkScreenFit("preview");screenshot("08-visual-markdown");back();tab("专注");
     }
-    private void checkHomeTextFit(){runOnMainSync(()->{View home=field("body",LinearLayout.class);walk(home,v->{if(v instanceof TextView){TextView text=(TextView)v;if(text.getText().length()>0){geometryCheck(text.getLayout()!=null&&text.getLayout().getHeight()<=text.getHeight()-text.getCompoundPaddingTop()-text.getCompoundPaddingBottom()+1,"home text fits available height: "+text.getText());}}return false;});});}
+    private void checkHomeTextFit(){runOnMainSync(()->{View home=field("body",LinearLayout.class);walk(home,v->{if(v instanceof TextView){TextView text=(TextView)v;if(text.getText().length()>0){
+        android.text.Layout layout=text.getLayout();android.graphics.Paint.FontMetrics fm=text.getPaint().getFontMetrics();
+        android.graphics.Rect global=new android.graphics.Rect(),glyph=new android.graphics.Rect();int[] location=new int[2];boolean visible=text.getGlobalVisibleRect(global);text.getLocationOnScreen(location);String value=text.getText().toString();text.getPaint().getTextBounds(value,0,value.length(),glyph);
+        StringBuilder metrics=new StringBuilder("HOME_METRICS text=").append(value).append(" view=").append(text.getWidth()).append('x').append(text.getHeight()).append(" layoutHeight=").append(layout==null?-1:layout.getHeight()).append(" textSizePx=").append(text.getTextSize()).append(" includeFontPadding=").append(text.getIncludeFontPadding()).append(" padding=").append(text.getPaddingTop()).append(',').append(text.getPaddingBottom()).append(" compoundPadding=").append(text.getCompoundPaddingTop()).append(',').append(text.getCompoundPaddingBottom()).append(" extendedPadding=").append(text.getExtendedPaddingTop()).append(',').append(text.getExtendedPaddingBottom()).append(" totalPadding=").append(text.getTotalPaddingTop()).append(',').append(text.getTotalPaddingBottom()).append(" fontMetrics=").append(fm.top).append(',').append(fm.ascent).append(',').append(fm.descent).append(',').append(fm.bottom).append(" baseline=").append(text.getBaseline()).append(" glyphBounds=").append(glyph).append(" glyphScreenY=").append(location[1]+text.getBaseline()+glyph.top).append("..").append(location[1]+text.getBaseline()+glyph.bottom).append(" visible=").append(visible).append(" globalRect=").append(global).append(" screenOrigin=").append(location[0]).append(',').append(location[1]);
+        if(layout!=null)for(int line=0;line<layout.getLineCount();line++)metrics.append(" line[").append(line).append("] top/ascent/baseline/descent/bottom=").append(layout.getLineTop(line)).append('/').append(layout.getLineAscent(line)).append('/').append(layout.getLineBaseline(line)).append('/').append(layout.getLineDescent(line)).append('/').append(layout.getLineBottom(line));
+        log.append(metrics).append('\n');Bundle status=new Bundle();status.putString("stream",metrics+"\n");sendStatus(0,status);
+        geometryCheck(layout!=null&&layout.getHeight()<=text.getHeight()-text.getCompoundPaddingTop()-text.getCompoundPaddingBottom()+1,"home text fits available height: "+text.getText());
+    }}return false;});});}
     private void back(){runOnMainSync(()->screen.onBackPressed());idle();}
     @SuppressWarnings("unchecked") private <T>T field(String name,Class<T> type){try{Field f=MainActivity.class.getDeclaredField(name);f.setAccessible(true);return (T)f.get(screen);}catch(Exception e){throw new RuntimeException(e);}}
     private <T extends View>T findType(Class<T> type){for(View root:rootViews()){View v=walk(root,type::isInstance);if(v!=null)return type.cast(v);}return null;}

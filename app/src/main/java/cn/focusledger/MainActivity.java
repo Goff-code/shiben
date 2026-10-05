@@ -88,11 +88,11 @@ public final class MainActivity extends Activity {
         body.addView(titleRow,new LinearLayout.LayoutParams(-1,-2));
 
         if(active){
-            gap(body,8);TextView task=label(s.taskTitle,16,MUTED,false);task.setGravity(Gravity.CENTER);task.setMaxLines(1);task.setEllipsize(TextUtils.TruncateAt.END);task.setAutoSizeTextTypeUniformWithConfiguration(10,16,1,2);body.addView(task,new LinearLayout.LayoutParams(-1,dp(this,28)));
+            gap(body,8);TextView task=label(s.taskTitle,16,MUTED,false);task.setGravity(Gravity.CENTER);task.setMaxLines(1);task.setEllipsize(TextUtils.TruncateAt.END);task.setAutoSizeTextTypeUniformWithConfiguration(10,16,1,2);body.addView(task,new LinearLayout.LayoutParams(-1,dp(this,getResources().getConfiguration().fontScale>1.75f?32:28)));
             ring=new UiKit.HomeRing(this);body.addView(ring,new LinearLayout.LayoutParams(-1,0,1));
             elapsed=label("",14,MUTED,false);elapsed.setGravity(Gravity.CENTER);elapsed.setMaxLines(1);elapsed.setHorizontallyScrolling(false);elapsed.setAutoSizeTextTypeUniformWithConfiguration(10,14,1,2);body.addView(elapsed,new LinearLayout.LayoutParams(-1,dp(this,30)));gap(body,8);
             body.addView(homeButton(s.paused?"继续专注":"暂停",true,()->run(()->{if(timer.engine().isPaused())timer.resume();else timer.pause();render();})),new LinearLayout.LayoutParams(-1,dp(this,54)));gap(body,8);
-            body.addView(homeButton("结束",false,this::finishDialog),new LinearLayout.LayoutParams(-1,dp(this,48)));
+            body.addView(homeButton("结束",false,this::finishDialog),new LinearLayout.LayoutParams(-1,dp(this,getResources().getConfiguration().fontScale>1.75f?54:48)));
         }else{
             UiKit.HomeRing ready=new UiKit.HomeRing(this);ready.set(1,TimerService.format(minutes*60000L),"专注，遇见更好的自己",false);ready.setContentDescription("准备专注，时长 "+minutes+" 分钟，尚未开始");body.addView(ready,new LinearLayout.LayoutParams(-1,0,1));
             LinearLayout controls=glassPanel();controls.setPadding(dp(this,10),dp(this,10),dp(this,10),dp(this,10));body.addView(controls,new LinearLayout.LayoutParams(-1,-2));
