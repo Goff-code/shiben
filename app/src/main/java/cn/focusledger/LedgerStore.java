@@ -10,6 +10,7 @@ import cn.focusledger.core.DailyTotals;
 import cn.focusledger.core.PriorityProgress;
 import cn.focusledger.core.Segment;
 import cn.focusledger.core.Session;
+import cn.focusledger.core.SettlementGrade;
 import cn.focusledger.core.TimerEngine;
 
 import java.io.ByteArrayInputStream;
@@ -34,7 +35,7 @@ import java.util.UUID;
 /** All app data stays in this app-private SQLite database. */
 public final class LedgerStore extends SQLiteOpenHelper {
     private static final String DATABASE_NAME = "focus-ledger.db";
-    private static final int DATABASE_VERSION = 2;
+    private static final int DATABASE_VERSION = 3;
     private final Context appContext;
 
     public static final class Project {
@@ -135,13 +136,59 @@ public final class LedgerStore extends SQLiteOpenHelper {
         /** NaN when the daily task inventory or any active progress is unknown. */
         public final double totalProgress;
         public final boolean completeSnapshot;
-        public final long totalActualMs;
+        public final long totalActualMs, totalManualMs;
+        /** Requires at least one active task and every active task explicitly at 100%. */
+        public final boolean genuineCompletion;
+        public final String settlementGrade;
 
         public DaySnapshot(LocalDate day, List<DayTask> items, double totalProgress,
                            boolean completeSnapshot, long totalActualMs) {
+            this(day, items, totalProgress, completeSnapshot, totalActualMs, null, 0L);
+        }
+
+        public DaySnapshot(LocalDate day, List<DayTask> items, double totalProgress,
+                           boolean completeSnapshot, long totalActualMs, String settlementOverride) {
+            this(day, items, totalProgress, completeSnapshot, totalActualMs, settlementOverride, 0L);
+        }
+
+        public DaySnapshot(LocalDate day, List<DayTask> items, double totalProgress,
+                           boolean completeSnapshot, long totalActualMs, String settlementOverride,
+                           long totalManualMs) {
             this.day = day; this.items = Collections.unmodifiableList(new ArrayList<>(items));
             this.totalProgress = totalProgress; this.completeSnapshot = completeSnapshot;
-            this.totalActualMs = totalActualMs;
+            this.totalActualMs = totalActualMs; this.totalManualMs = totalManualMs;
+            double gradeProgress = knownGradeProgress(items, completeSnapshot, totalProgress);
+            this.genuineCompletion = hasGenuineCompletion(items, completeSnapshot, gradeProgress);
+            this.settlementGrade = SettlementGrade.resolve(gradeProgress, genuineCompletion, settlementOverride);
+        }
+
+        public DaySnapshot withActualTotals(List<DayTask> updatedItems, long totalActualMs) {
+            return new DaySnapshot(day, updatedItems, totalProgress, completeSnapshot,
+                    totalActualMs, settlementGrade, totalManualMs);
+        }
+
+        private static double knownGradeProgress(List<DayTask> items, boolean complete, double total) {
+            if (!complete) return Double.NaN;
+            boolean hasActive = false;
+            for (DayTask item : items) {
+                if (item.archived) continue;
+                hasActive = true;
+                if (item.progress < 0 || item.progress > 100 || item.rank < 1 || Double.isNaN(item.weight)
+                        || Double.isInfinite(item.weight) || item.weight < 0d || item.weight > 1d) return Double.NaN;
+            }
+            return hasActive ? total : 0d;
+        }
+
+        private static boolean hasGenuineCompletion(List<DayTask> items, boolean complete, double total) {
+            if (!complete || Double.isNaN(total) || Double.isInfinite(total)) return false;
+            boolean hasActive = false;
+            for (DayTask item : items) {
+                if (item.archived) continue;
+                hasActive = true;
+                if (item.progress != 100 || item.rank < 1 || Double.isNaN(item.weight)
+                        || Double.isInfinite(item.weight) || item.weight < 0d || item.weight > 1d) return false;
+            }
+            return hasActive;
         }
     }
 
@@ -174,10 +221,13 @@ public final class LedgerStore extends SQLiteOpenHelper {
         db.execSQL("CREATE TABLE timer_state (singleton INTEGER PRIMARY KEY CHECK(singleton=1), "
                 + "record BLOB NOT NULL)");
         createV2Schema(db);
+        createV3Schema(db);
     }
 
     @Override public void onUpgrade(SQLiteDatabase db, int oldVersion, int newVersion) {
-        if (oldVersion == 1 && newVersion == 2) {
+        if (oldVersion < 1 || oldVersion > newVersion || newVersion > DATABASE_VERSION)
+            throw new IllegalStateException("Unsupported database upgrade: " + oldVersion + " -> " + newVersion);
+        if (oldVersion < 2 && newVersion >= 2) {
             createV2Schema(db);
             // Checklists are evidence of names/binary check marks, never evidence of percentages,
             // old priority ranks, the full task inventory, or V2 weights.
@@ -191,10 +241,14 @@ public final class LedgerStore extends SQLiteOpenHelper {
                     null, null, "started_wall_ms,id")) {
                 while (c.moveToNext()) recordSessionEvidence(db, deserialize(c.getBlob(0), Session.class));
             }
-            return;
         }
-        // Never drop personal history to handle an unknown schema revision.
-        throw new IllegalStateException("Unsupported database upgrade: " + oldVersion + " -> " + newVersion);
+        if (oldVersion < 3 && newVersion >= 3) createV3Schema(db);
+    }
+
+    /** Additive upgrade: existing headers, task snapshots, sessions and timer blobs remain intact. */
+    private static void createV3Schema(SQLiteDatabase db) {
+        db.execSQL("ALTER TABLE daily_snapshots ADD COLUMN settlement_grade TEXT "
+                + "CHECK(settlement_grade IS NULL OR settlement_grade IN ('S','SS','SSS','SSS+'))");
     }
 
     private static void createV2Schema(SQLiteDatabase db) {
@@ -254,6 +308,7 @@ public final class LedgerStore extends SQLiteOpenHelper {
             db.update("projects", projectValues(project), "id=?", new String[]{project.id});
             writeOrder(db, activeTasks(db));
             refreshTodaySnapshot(db, today);
+            invalidateSettlementIfIncomplete(db, today);
             db.setTransactionSuccessful();
         } finally { db.endTransaction(); }
         notifyArchive();
@@ -273,6 +328,7 @@ public final class LedgerStore extends SQLiteOpenHelper {
             db.update("tasks", values, "project_id=?", new String[]{id});
             writeOrder(db, activeTasks(db));
             refreshTodaySnapshot(db, today);
+            invalidateSettlementIfIncomplete(db, today);
             db.setTransactionSuccessful();
         } finally { db.endTransaction(); }
         notifyArchive();
@@ -300,6 +356,29 @@ public final class LedgerStore extends SQLiteOpenHelper {
             while (c.moveToNext()) result.add(taskFrom(c));
         }
         return result;
+    }
+
+    /** Backfill choices retain this day's frozen labels, including archived historical tasks. */
+    public synchronized List<Task> getManualTasks(LocalDate day) {
+        if (day == null || day.isAfter(LocalDate.now()))
+            throw new IllegalArgumentException("只能选择今天或过去的日期");
+        List<Task> choices = new ArrayList<>();
+        Set<String> ids = new HashSet<>();
+        for (DayTask item : getDaySnapshot(day).items) {
+            Task current = getTask(item.taskId);
+            choices.add(new Task(item.taskId, item.title, current == null ? null : current.projectId,
+                    current == null ? 25 : current.plannedMinutes, item.rank < 1 ? -1 : item.rank - 1,
+                    127, null, item.archived || current != null && current.archived));
+            ids.add(item.taskId);
+        }
+        // A user can backfill work that was never timed. This does not invent its old priority/progress.
+        List<Task> all = getAllTasks();
+        for (boolean archived : new boolean[]{false, true}) {
+            for (Task task : all) {
+                if (task.archived == archived && ids.add(task.id)) choices.add(task);
+            }
+        }
+        return choices;
     }
 
     public synchronized Task getTask(String id) {
@@ -340,6 +419,7 @@ public final class LedgerStore extends SQLiteOpenHelper {
                 db.insertOrThrow("tasks", null, taskValues(task));
             writeOrder(db, activeTasks(db));
             refreshTodaySnapshot(db, today);
+            invalidateSettlementIfIncomplete(db, today);
             db.setTransactionSuccessful();
         } finally { db.endTransaction(); }
         notifyArchive();
@@ -439,6 +519,7 @@ public final class LedgerStore extends SQLiteOpenHelper {
             writeOrder(db, active);
             refreshTodaySnapshot(db, today);
             writeProgress(db, task.id, initialProgress, today);
+            invalidateSettlementIfIncomplete(db, today);
             db.setTransactionSuccessful();
         } finally { db.endTransaction(); }
         notifyArchive();
@@ -464,6 +545,7 @@ public final class LedgerStore extends SQLiteOpenHelper {
             db.update("tasks", values, "id=?", new String[]{id});
             writeOrder(db, active);
             refreshTodaySnapshot(db, today);
+            invalidateSettlementIfIncomplete(db, today);
             db.setTransactionSuccessful();
         } finally { db.endTransaction(); }
         notifyArchive();
@@ -482,6 +564,7 @@ public final class LedgerStore extends SQLiteOpenHelper {
             for (Task task : activeTasks(db)) if (task.id.equals(id)) { exists = true; break; }
             if (!exists) throw new IllegalArgumentException("找不到可用的任务");
             writeProgress(db, id, progress, today);
+            invalidateSettlementIfIncomplete(db, today);
             db.setTransactionSuccessful();
         } finally { db.endTransaction(); }
         notifyArchive();
@@ -506,6 +589,7 @@ public final class LedgerStore extends SQLiteOpenHelper {
             }
             writeOrder(db, ordered);
             refreshTodaySnapshot(db, today);
+            invalidateSettlementIfIncomplete(db, today);
             db.setTransactionSuccessful();
         } finally { db.endTransaction(); }
         notifyArchive();
@@ -525,35 +609,57 @@ public final class LedgerStore extends SQLiteOpenHelper {
                 throw new IllegalArgumentException("找不到这个任务");
             writeOrder(db, activeTasks(db));
             refreshTodaySnapshot(db, today);
+            invalidateSettlementIfIncomplete(db, today);
             db.setTransactionSuccessful();
         } finally { db.endTransaction(); }
         notifyArchive();
     }
 
     public synchronized DaySnapshot getDaySnapshot(LocalDate day) {
+        return getDaySnapshot(day, null);
+    }
+
+    /** A captured timer preview is read-only, date-split and never counted beside its durable id. */
+    public synchronized DaySnapshot getDaySnapshot(LocalDate day, Session activeSession) {
         if (day == null) throw new IllegalArgumentException("日期不能为空");
         if (day.equals(LocalDate.now())) ensureToday();
         SQLiteDatabase db = getReadableDatabase();
         boolean complete = false;
-        try (Cursor c = db.query("daily_snapshots", new String[]{"complete"}, "day=?",
+        String settlementOverride = null;
+        try (Cursor c = db.query("daily_snapshots", new String[]{"complete", "settlement_grade"}, "day=?",
                 new String[]{day.toString()}, null, null, null)) {
-            if (c.moveToFirst()) complete = c.getInt(0) != 0;
+            if (c.moveToFirst()) {
+                complete = c.getInt(0) != 0;
+                settlementOverride = c.isNull(1) ? null : c.getString(1);
+            }
+        }
+        List<Session> sessions = getSessions();
+        if (activeSession != null) {
+            // Include tombstones in this check: an old preview must not revive a deleted record.
+            try (Cursor c = db.query("sessions", new String[]{"id"}, "id=?",
+                    new String[]{activeSession.id}, null, null, null)) {
+                if (!c.moveToFirst()) sessions.add(activeSession);
+                else activeSession = null;
+            }
         }
         Map<String, Long> focus = new HashMap<>();
-        long totalFocus = 0L;
-        for (Session session : getSessions()) {
+        long totalFocus = 0L, totalManual = 0L;
+        for (Session session : sessions) {
             long actual = DailyTotals.totalsByDay(session).getOrDefault(day, 0L);
             if (actual > 0) {
                 focus.put(session.taskId, Math.addExact(focus.getOrDefault(session.taskId, 0L), actual));
                 totalFocus = Math.addExact(totalFocus, actual);
+                if (session.manual) totalManual = Math.addExact(totalManual, actual);
             }
         }
         List<DayTask> items = new ArrayList<>();
+        boolean previewTaskPresent = false;
         double total = complete ? 0d : Double.NaN;
         try (Cursor c = db.query("daily_task_snapshots", null, "day=?", new String[]{day.toString()},
                 null, null, "archived,CASE WHEN rank IS NULL THEN 1 ELSE 0 END,rank,task_id")) {
             while (c.moveToNext()) {
                 String id = string(c, "task_id");
+                if (activeSession != null && id.equals(activeSession.taskId)) previewTaskPresent = true;
                 int rank = nullableInt(c, "rank", -1), progress = nullableInt(c, "progress", -1);
                 int weightColumn = c.getColumnIndexOrThrow("weight");
                 double weight = c.isNull(weightColumn) ? Double.NaN : c.getDouble(weightColumn);
@@ -565,7 +671,58 @@ public final class LedgerStore extends SQLiteOpenHelper {
                 if (!archived) total += progress < 0 || rank < 1 ? Double.NaN : progress * weight;
             }
         }
-        return new DaySnapshot(day, items, total, complete, totalFocus);
+        // Preview-only evidence can fill a previous day's missing timer row without rewriting history.
+        if (activeSession != null && !previewTaskPresent
+                && focus.getOrDefault(activeSession.taskId, 0L) > 0L) {
+            items.add(new DayTask(activeSession.taskId, activeSession.taskTitle, -1, -1, Double.NaN,
+                    focus.get(activeSession.taskId), complete, null));
+        }
+        return new DaySnapshot(day, items, total, complete, totalFocus, settlementOverride, totalManual);
+    }
+
+    /** Only the S family is selectable, and only while the recorded day is genuinely complete. */
+    public synchronized void setSettlementGrade(LocalDate day, String grade) {
+        if (day == null || day.isAfter(LocalDate.now()))
+            throw new IllegalArgumentException("只能调整今天或过去的结算等级");
+        if (!SettlementGrade.isManualGrade(grade))
+            throw new IllegalArgumentException("完成全部任务后可选择 S、SS、SSS 或 SSS+");
+        SQLiteDatabase db = getWritableDatabase();
+        db.beginTransaction();
+        try {
+            if (day.equals(LocalDate.now())) ensureTodayInTransaction(db, day);
+            if (!isGenuinelyComplete(db, day))
+                throw new IllegalArgumentException("全部有效任务的进度均为 100% 后才能调整结算等级");
+            ContentValues values = new ContentValues(); values.put("settlement_grade", grade);
+            db.update("daily_snapshots", values, "day=?", new String[]{day.toString()});
+            db.setTransactionSuccessful();
+        } finally { db.endTransaction(); }
+        notifyArchive();
+    }
+
+    private static boolean isGenuinelyComplete(SQLiteDatabase db, LocalDate day) {
+        try (Cursor c = db.query("daily_snapshots", new String[]{"complete"}, "day=?",
+                new String[]{day.toString()}, null, null, null)) {
+            if (!c.moveToFirst() || c.getInt(0) == 0) return false;
+        }
+        boolean hasActive = false;
+        try (Cursor c = db.query("daily_task_snapshots", new String[]{"progress", "rank", "weight"},
+                "day=? AND archived=0", new String[]{day.toString()}, null, null, null)) {
+            while (c.moveToNext()) {
+                hasActive = true;
+                if (c.isNull(0) || c.getInt(0) != 100 || c.isNull(1) || c.getInt(1) < 1 || c.isNull(2)
+                        || Double.isNaN(c.getDouble(2)) || Double.isInfinite(c.getDouble(2))
+                        || c.getDouble(2) < 0d || c.getDouble(2) > 1d) return false;
+            }
+        }
+        return hasActive;
+    }
+
+    /** Clear persistently so an old SS/SSS selection cannot revive when progress later reaches 100%. */
+    private static void invalidateSettlementIfIncomplete(SQLiteDatabase db, LocalDate day) {
+        if (isGenuinelyComplete(db, day)) return;
+        ContentValues values = new ContentValues(); values.putNull("settlement_grade");
+        db.update("daily_snapshots", values, "day=? AND settlement_grade IS NOT NULL",
+                new String[]{day.toString()});
     }
 
     /** Days with recorded task/checklist/session evidence, newest first. Empty headers are not history. */

@@ -23,6 +23,13 @@ public final class LedgerInstrumentation extends Instrumentation {
     @Override public void callActivityOnResume(Activity a){super.callActivityOnResume(a);screen=a;}
     @Override public void onStart(){Bundle result=new Bundle();try{
         context=getTargetContext();
+        if("attention_store".equals(suite)){DailyArchive.get(context);AttentionV202Instrumentation.run(context,name->check(true,name));result.putString("stream",log+"\nOK ("+passed+" checks)\n");result.putInt("checks",passed);finish(Activity.RESULT_OK,result);return;}
+        if("attention".equals(suite)||"attention_layout".equals(suite)){
+            DailyArchive.get(context);
+            if("attention".equals(suite))AttentionV202Instrumentation.run(context,name->check(true,name));
+            runAttentionUi("attention_layout".equals(suite));
+            result.putString("stream",log+"\nOK ("+passed+" checks)\n");result.putInt("checks",passed);finish(Activity.RESULT_OK,result);return;
+        }
         if("store".equals(suite)||"export".equals(suite)){DailyArchive.get(context);if("store".equals(suite))StoreV2Instrumentation.run(context,name->check(true,name));else ExportInstrumentationChecks.run(context,name->check(true,name));result.putString("stream",log+"\nOK ("+passed+" checks)\n");result.putInt("checks",passed);finish(Activity.RESULT_OK,result);return;}
         if("presentation".equals(suite)){store=TimerCoordinator.get(context).store();check(store.getTasks(LocalDate.now()).isEmpty()&&store.getSessions().isEmpty(),"presentation uses isolated empty fixture");store.saveSimpleTask("阅读",100,1);store.saveSimpleTask("Web3",60,2);store.saveSimpleTask("英语",0,3);store.saveSimpleTask("代码视频",0,4);screen=startActivitySync(new Intent(context,MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));idle();tab("专注");desc("任务，");runOnMainSync(()->{ListView list=findType(ListView.class);list.performItemClick(list.getChildAt(0),0,list.getAdapter().getItemId(0));});click("确定");screenshot("20-presentation-focus");runOnMainSync(()->{View tab=walk(screen.getWindow().getDecorView(),v->v.getContentDescription()!=null&&"任务".contentEquals(v.getContentDescription()));tab.performClick();});idle();check(has("每日进度从 0% 开始，任务列表会保留"),"daily-reset help is present in current native task list");screenshot("21-presentation-tasks");tab("今日");check(store.getDaySnapshot(LocalDate.now()).totalProgress==65,"presentation total is calculated65percent, not a hardcoded display");screenshot("22-presentation-today");result.putString("stream",log+"\nOK ("+passed+" checks)\n");result.putInt("checks",passed);finish(Activity.RESULT_OK,result);return;}
         if("empty_history".equals(suite)){screen=startActivitySync(new Intent(context,MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));idle();store=TimerCoordinator.get(context).store();check(store.getTasks(LocalDate.now()).isEmpty()&&store.getSessions().isEmpty(),"fresh history UI fixture has no tasks or sessions");tab("今日");desc("更多");desc("历史记录");check(has("还没有历史记录"),"untouched installation shows actual empty history screen");check(store.getRecordedDays().isEmpty(),"empty daily header does not become recorded history");screenshot("19-empty-history");result.putString("stream",log+"\nOK ("+passed+" checks)\n");result.putInt("checks",passed);finish(Activity.RESULT_OK,result);return;}
@@ -43,7 +50,7 @@ public final class LedgerInstrumentation extends Instrumentation {
                     DailyArchive.schedule(context);SystemClock.sleep(2500);
                 }
                 check(!store.getSessions().isEmpty()&&store.getRecordedDays().size()>=2,"upgrade fixture contains actual focus history and prior-day records");runOnMainSync(()->{if(!timer.engine().isActive())timer.start(store.getTasks(LocalDate.now()).get(0),15);});SystemClock.sleep(1200);runOnMainSync(timer::pause);TimerEngine.State state=store.loadTimer();org.json.JSONObject expected=new org.json.JSONObject();expected.put("sessionId",state.sessionId);expected.put("taskId",state.taskId);expected.put("plannedMs",state.plannedMs);expected.put("actualMs",state.accumulatedMs);expected.put("taskCount",store.getTasks(LocalDate.now()).size());expected.put("sessionCount",store.getSessions().size());expected.put("totalProgress",store.getDaySnapshot(LocalDate.now()).totalProgress);context.getSharedPreferences("shiben-settings",Context.MODE_PRIVATE).edit().putBoolean("reminders",true).putBoolean("sound",false).putBoolean("vibration",false).commit();expected.put("settings",new org.json.JSONObject(context.getSharedPreferences("shiben-settings",Context.MODE_PRIVATE).getAll()));try(FileOutputStream out=new FileOutputStream(expectation)){out.write(expected.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8));}check(state.paused,"paused timer persisted before package update");waitFor("已暂停",15000);screenshot("17-upgrade-paused-v3");}
-            else{check(context.getPackageManager().getPackageInfo(context.getPackageName(),0).versionCode==4,"visual patch versionCode4 is installed");org.json.JSONObject expected=new org.json.JSONObject(new String(java.nio.file.Files.readAllBytes(expectation.toPath()),java.nio.charset.StandardCharsets.UTF_8));TimerEngine.State state=store.loadTimer();check(state!=null&&state.paused,"paused timer survives in-place package update");check(expected.getString("sessionId").equals(state.sessionId)&&expected.getString("taskId").equals(state.taskId),"timer and task identities unchanged after update");check(expected.getLong("plannedMs")==state.plannedMs&&expected.getLong("actualMs")==state.accumulatedMs,"planned and accumulated timer duration unchanged");check(expected.getInt("taskCount")==store.getTasks(LocalDate.now()).size(),"task list count survives update");check(expected.getInt("sessionCount")==store.getSessions().size(),"session history count survives update");check(Math.abs(expected.getDouble("totalProgress")-store.getDaySnapshot(LocalDate.now()).totalProgress)<1e-9,"weighted manual progress survives update");if(expected.has("settings")){org.json.JSONObject settings=expected.getJSONObject("settings");for(Iterator<String> keys=settings.keys();keys.hasNext();){String key=keys.next();check(Objects.equals(settings.get(key),context.getSharedPreferences("shiben-settings",Context.MODE_PRIVATE).getAll().get(key)),"reminder preference survives update: "+key);}}waitFor("已暂停",15000);screenshot("18-upgrade-paused-v4");}
+            else{check(context.getPackageManager().getPackageInfo(context.getPackageName(),0).versionCode==5,"attention patch versionCode5 is installed");org.json.JSONObject expected=new org.json.JSONObject(new String(java.nio.file.Files.readAllBytes(expectation.toPath()),java.nio.charset.StandardCharsets.UTF_8));TimerEngine.State state=store.loadTimer();check(state!=null&&state.paused,"paused timer survives in-place package update");check(expected.getString("sessionId").equals(state.sessionId)&&expected.getString("taskId").equals(state.taskId),"timer and task identities unchanged after update");check(expected.getLong("plannedMs")==state.plannedMs&&expected.getLong("actualMs")==state.accumulatedMs,"planned and accumulated timer duration unchanged");check(expected.getInt("taskCount")==store.getTasks(LocalDate.now()).size(),"task list count survives update");check(expected.getInt("sessionCount")==store.getSessions().size(),"session history count survives update");check(Math.abs(expected.getDouble("totalProgress")-store.getDaySnapshot(LocalDate.now()).totalProgress)<1e-9,"weighted manual progress survives update");if(expected.has("settings")){org.json.JSONObject settings=expected.getJSONObject("settings");for(Iterator<String> keys=settings.keys();keys.hasNext();){String key=keys.next();check(Objects.equals(settings.get(key),context.getSharedPreferences("shiben-settings",Context.MODE_PRIVATE).getAll().get(key)),"reminder preference survives update: "+key);}}waitFor("已暂停",15000);screenshot("18-upgrade-paused-v5");}
             result.putString("stream",log+"\nOK ("+passed+" checks)\n");result.putInt("checks",passed);finish(Activity.RESULT_OK,result);return;
         }
         if("saf".equals(suite)){screen=startActivitySync(new Intent(context,MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));idle();tab("今日");desc("更多");desc("导出记录");click("预览导出");waitFor("保存文件",30000);click("保存文件");Bundle ready=new Bundle();ready.putString("stream","SAF_PICKER_READY\n");sendStatus(0,ready);saveThroughSystemPicker();waitForSavedFile();check(true,"actual SAF picker returns successful native save dialog");String source=field("pendingFile",String.class);File folder=new File(context.getFilesDir(),"qa-v2");folder.mkdirs();java.nio.file.Files.copy(new File(source).toPath(),new File(folder,"saf-source.md").toPath(),java.nio.file.StandardCopyOption.REPLACE_EXISTING);screenshot("16-saf-save-success");String copyId=field("copyJobId",String.class),destination=field("copyDestination",String.class),delivered=field("copyDeliveredId",String.class);click("返回");recreate();check(copyId!=null&&copyId.equals(field("copyJobId",String.class)),"save job identity survives Activity recreation");check(destination!=null&&destination.equals(field("copyDestination",String.class)),"chosen document URI survives Activity recreation");check(delivered!=null&&delivered.equals(field("copyDeliveredId",String.class))&&!has("文件已保存"),"completed save feedback is not duplicated after recreation");String oldExport=field("exportJobId",String.class);back();click("预览导出");waitFor("保存文件",30000);String freshExport=field("exportJobId",String.class);check(!oldExport.equals(freshExport)&&jobListener(oldExport)==null,"repeated export detaches previous terminal Activity listener");recreate();check(listenerCapturesActivity(jobListener(freshExport)),"recreated preview attaches only the current Activity");String oldCopy=field("copyJobId",String.class);runOnMainSync(()->((MainActivity)screen).onActivityResult(401,Activity.RESULT_OK,new Intent().setData(android.net.Uri.parse(destination))));waitFor("文件已保存",30000);check(!oldCopy.equals(field("copyJobId",String.class))&&jobListener(oldCopy)==null,"repeated authorized document copy detaches previous Activity listener");click("返回");result.putString("stream",log+"\nOK ("+passed+" checks)\n");result.putInt("checks",passed);finish(Activity.RESULT_OK,result);return;}
@@ -171,6 +178,116 @@ public final class LedgerInstrumentation extends Instrumentation {
         StoreV2Instrumentation.run(context,name->check(true,name));
         result.putString("stream",log+"\nOK ("+passed+" checks)\n");result.putInt("checks",passed);finish(Activity.RESULT_OK,result);
     }catch(Throwable error){result.putString("stream",log+"FAIL "+error+"\n"+android.util.Log.getStackTraceString(error));try{screenshot("99-failure");}catch(Throwable ignored){}finish(Activity.RESULT_CANCELED,result);}}
+    /** Runs only after an explicit fresh disposable-emulator precondition. */
+    private void runAttentionUi(boolean layoutOnly)throws Exception {
+        timer=TimerCoordinator.get(context);store=timer.store();LocalDate today=LocalDate.now(),yesterday=today.minusDays(1);
+        check(store.getTasks(today).isEmpty()&&store.getSessions().isEmpty()&&!timer.engine().isActive(),
+                "attention UI uses a fresh disposable app fixture, never an existing user's ledger");
+        LedgerStore.Task task=store.saveSimpleTask("注意力测试任务",0,1);
+        AttentionV202Instrumentation.freezeCopy(store,today,yesterday);
+        screen=startActivitySync(new Intent(context,MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));idle();
+        tab("今日");check(has("E")&&has("今日投资注意力时长")&&!has("调整等级"),"Today shows E and attention total with no premature grade control");
+        checkScreenFit("attention-today-E");checkTabs();screenshot("40-attention-today-E");
+        store.setTaskProgress(task.id,94);tab("今日");check(has("A")&&!has("调整等级"),"raw 94 percent renders A in real Today UI");
+        store.setTaskProgress(task.id,97);tab("今日");check(has("A+")&&!has("调整等级"),"raw 97 percent renders A+ with adjustment unavailable");
+        checkScreenFit("attention-today-A-plus");screenshot("41-attention-today-A-plus");
+        store.setTaskProgress(task.id,100);tab("今日");check(has("S")&&has("调整等级"),"genuine 100 percent exposes S and adjustment control");
+        checkScreenFit("attention-today-S");screenshot("42-attention-today-S");
+        click("调整等级");click("SSS");checkDialogFit("settlement-options");screenshot("43-attention-grade-dialog");
+        click("取消");check("S".equals(store.getDaySnapshot(today).settlementGrade),"cancelled grade choice leaves default S untouched");
+        click("调整等级");click("SSS+");recreate();
+        check(field("dialogValue",Integer.class)==0&&has("选择当日结算等级"),"pending SSS+ choice survives Activity recreation");
+        click("确定");check(has("SSS+")&&"SSS+".equals(store.getDaySnapshot(today).settlementGrade),"confirmed SSS+ is persisted and rendered");
+        checkScreenFit("attention-today-SSS-plus");screenshot("44-attention-today-SSS-plus");
+        if(!layoutOnly){
+            store.setTaskProgress(task.id,99);tab("今日");check(has("A+")&&!has("调整等级"),"reverting below completion removes the old grade and its UI control");
+            store.setTaskProgress(task.id,100);tab("今日");check(has("S"),"returning to 100 percent does not resurrect SSS+");
+            click("调整等级");click("SSS+");click("确定");
+        }
+        store.updateSimpleTask(task.id,"现在的任务名称",1);
+        tab("今日");desc("更多");checkScreenFit("attention-more");screenshot("45-attention-more");
+        desc("补记注意力时长");check(has("保存补记")&&has("取消"),"More opens actual manual attention editor");
+        manualPickDate(yesterday);manualPickTime(10,5);manualSetDuration("1","17");
+        dialogDesc("任务，");chooseTopList(0);click("确定");
+        check("注意力测试任务".equals(field("manualTaskLabel",TextView.class).getText().toString()),"historical task selector uses its frozen name after today's rename");
+        checkDialogFit("manual-attention-form");screenshot("46-attention-manual-form");
+        reveal("保存补记");checkControlVisible("保存补记","manual save action");checkControlVisible("取消","manual cancel action");
+        if(layoutOnly){
+            runOnMainSync(()->{EditText minutes=field("manualMinutesInput",EditText.class);minutes.requestFocus();minutes.requestRectangleOnScreen(new android.graphics.Rect(0,0,minutes.getWidth(),minutes.getHeight()),true);});idle();
+            checkInputFits("manualHoursInput","manual hours");checkInputFits("manualMinutesInput","manual minutes");
+            click("取消");checkDialogFit("manual-discard");screenshot("47-attention-manual-discard");click("放弃");
+            check(store.getSessions().isEmpty(),"layout-only cancelled form creates no session");
+            check(geometryFailures.isEmpty(),"new attention controls have no layout failures: "+geometryFailures);return;
+        }
+        String draftId=field("manualSessionId",String.class);
+        click("取消");check(has("放弃这次补记？"),"dirty manual Cancel asks before discarding");click("继续填写");
+        check(has("保存补记")&&store.getSessions().isEmpty(),"continue filling keeps manual draft and does not save");
+        recreate();check(draftId.equals(field("manualSessionId",String.class))&&yesterday.equals(field("manualDate",LocalDate.class))
+                        &&field("manualHour",Integer.class)==10&&field("manualMinute",Integer.class)==5
+                        &&"1".equals(field("manualHoursInput",EditText.class).getText().toString())
+                        &&"17".equals(field("manualMinutesInput",EditText.class).getText().toString()),
+                "manual identity, selected date/time and hours/minutes survive Activity recreation");
+        runOnMainSync(()->{View save=findText(rootViews(),"保存补记");save.performClick();save.performClick();});idle();
+        Session saved=store.getSession(draftId);long expectedStart=yesterday.atTime(10,5).atZone(ZoneId.systemDefault()).toInstant().toEpochMilli();
+        check(store.getSessions().size()==1&&saved!=null&&saved.manual&&!saved.edited&&saved.startedWallMs==expectedStart&&saved.actualMs==4620000,
+                "repeated native save persists exactly one real 1-hour-17-minute manual session");
+        check(saved.taskId.equals(task.id)&&saved.taskTitle.equals("注意力测试任务"),"saved manual record retains historical task identity and title");
+        check(progress(task.id)==100&&store.getDaySnapshot(yesterday).items.get(0).progress==0
+                        &&"SSS+".equals(store.getDaySnapshot(today).settlementGrade),
+                "manual save leaves today's progress/grade and historical progress unchanged");
+        check(store.getDaySnapshot(yesterday).totalActualMs==4620000&&store.getDaySnapshot(yesterday).totalManualMs==4620000,
+                "manual date rather than today's date receives attention and manual subtotal");
+        desc("补记注意力时长");manualPickDate(yesterday);manualPickTime(10,20);manualSetDuration("0","20");click("保存补记");
+        check(manualErrorContains("重叠")&&store.getSessions().size()==1&&has("保存补记"),"overlap is rejected inline with editable draft and no duplicate record");
+        screenshot("48-attention-overlap-error");discardManual();
+        desc("补记注意力时长");manualSetDuration("0","0");click("保存补记");
+        check(manualErrorContains("至少")&&store.getSessions().size()==1,"zero-duration manual entry is rejected inline");
+        manualSetDuration("0","60");click("保存补记");check(manualErrorContains("59"),"minute value above 59 is rejected inline");
+        manualPickDate(today);manualPickTime(0,0);manualSetDuration("48","0");click("保存补记");
+        check(manualErrorContains("晚于现在")&&store.getSessions().size()==1,"future-ending manual interval is rejected even with a selectable past start");
+        screenshot("49-attention-future-error");discardManual();
+        desc("补记注意力时长");manualPickDate(today.minusDays(3));manualPickTime(23,45);manualSetDuration("0","30");click("保存补记");
+        check(store.getSessions().size()==2&&store.getDaySnapshot(today.minusDays(3)).totalActualMs==900000
+                        &&store.getDaySnapshot(today.minusDays(2)).totalActualMs==900000,
+                "actual native manual form saves a past interval across midnight into both days");
+        desc("补记注意力时长");manualSetDuration("2","3");discardManual();check(store.getSessions().size()==2,"discarding a second draft leaves saved sessions unchanged");
+        desc("补记注意力时长");check("0".equals(field("manualHoursInput",EditText.class).getText().toString())
+                        &&"30".equals(field("manualMinutesInput",EditText.class).getText().toString()),
+                "reopening after discard resets hours and minutes rather than leaking cancelled values");click("取消");
+        attentionTimerChecks(task.id,today);
+        check(geometryFailures.isEmpty(),"attention UI has no native layout failures: "+geometryFailures);
+    }
+    private void attentionTimerChecks(String taskId,LocalDate today)throws Exception {
+        tab("专注");click("开始专注");SystemClock.sleep(1200);tab("今日");
+        LedgerStore.DaySnapshot running=timer.snapshotForDay(today);int savedCount=store.getSessions().size();
+        check(running.totalActualMs>=1000&&running.totalManualMs==0&&running.totalProgress==100&&"SSS+".equals(running.settlementGrade),
+                "Today attention includes live real timer actuals while progress and grade stay independent");
+        SystemClock.sleep(1200);LedgerStore.DaySnapshot later=timer.snapshotForDay(today);
+        check(later.totalActualMs>running.totalActualMs&&store.getSessions().size()==savedCount,"live attention increases without saving terminal preview records");
+        check(field("attentionTotal",TextView.class).getText().toString().contains("秒"),"live actual time is rendered in Today text");
+        desc("更多");desc("补记注意力时长");check(!has("保存补记")&&timer.engine().isActive()&&store.getSessions().size()==savedCount,
+                "active timer blocks opening the manual editor without changing ledger");
+        tab("专注");click("暂停");tab("今日");long paused=timer.snapshotForDay(today).totalActualMs;
+        SystemClock.sleep(1200);check(timer.snapshotForDay(today).totalActualMs==paused,"paused attention stops accruing in Today snapshots");
+        List<LedgerStore.DaySnapshot> captured=timer.snapshotsForDays(Arrays.asList(today,today.minusDays(1)));
+        check(captured.get(0).totalActualMs==paused&&captured.get(1).totalActualMs==4620000,
+                "multi-day snapshot uses the same paused live time and preserves historical manual totals");
+        desc("更多");desc("补记注意力时长");check(!has("保存补记")&&timer.engine().isPaused(),"paused active timer also blocks manual entry");
+        tab("专注");click("结束");click("结束并保存");tab("今日");
+        check(store.getSessions().size()==savedCount+1&&timer.snapshotForDay(today).totalActualMs==paused,
+                "finishing paused timer replaces live projection with one durable session without double counting");
+        check(progress(taskId)==100&&"SSS+".equals(store.getDaySnapshot(today).settlementGrade),"timer completion changes neither manual progress nor chosen settlement grade");
+        screenshot("50-attention-timer-total");
+    }
+    private void dialogDesc(String prefix){runOnMainSync(()->{List<View> roots=rootViews();for(int i=roots.size()-1;i>=0;i--){View target=walk(roots.get(i),v->v.getContentDescription()!=null&&v.getContentDescription().toString().startsWith(prefix));if(target!=null){target.performClick();return;}}throw new AssertionError("Missing dialog control: "+prefix);});idle();}
+    private void chooseTopList(int index){runOnMainSync(()->{List<View> roots=rootViews();for(int i=roots.size()-1;i>=0;i--){View view=walk(roots.get(i),ListView.class::isInstance);if(view instanceof ListView){ListView list=(ListView)view;list.performItemClick(null,index,list.getAdapter().getItemId(index));return;}}throw new AssertionError("Missing dialog list");});idle();}
+    private void pickerConfirm(){runOnMainSync(()->{List<View> roots=rootViews();for(int i=roots.size()-1;i>=0;i--){View button=roots.get(i).findViewById(android.R.id.button1);if(button!=null&&button.isShown()){button.performClick();return;}}throw new AssertionError("Missing native picker confirmation");});idle();}
+    private void manualPickDate(LocalDate day){dialogDesc("日期，");runOnMainSync(()->{DatePicker picker=findType(DatePicker.class);if(picker==null)throw new AssertionError("Missing actual native DatePicker");picker.updateDate(day.getYear(),day.getMonthValue()-1,day.getDayOfMonth());});pickerConfirm();check(day.equals(field("manualDate",LocalDate.class)),"native date picker selected "+day);}
+    private void manualPickTime(int hour,int minute){dialogDesc("开始时间，");runOnMainSync(()->{TimePicker picker=findType(TimePicker.class);if(picker==null)throw new AssertionError("Missing actual native TimePicker");picker.setHour(hour);picker.setMinute(minute);});pickerConfirm();check(field("manualHour",Integer.class)==hour&&field("manualMinute",Integer.class)==minute,"native time picker selected "+hour+":"+minute);}
+    private void manualSetDuration(String hours,String minutes){runOnMainSync(()->{field("manualHoursInput",EditText.class).setText(hours);field("manualMinutesInput",EditText.class).setText(minutes);});idle();}
+    private boolean manualErrorContains(String needle){final boolean[] found={false};runOnMainSync(()->{TextView error=field("manualError",TextView.class);found[0]=error!=null&&error.getVisibility()==View.VISIBLE&&error.getText().toString().contains(needle);});return found[0];}
+    private void discardManual(){click("取消");if(has("放弃这次补记？"))click("放弃");}
+    private void checkInputFits(String name,String label){runOnMainSync(()->{EditText input=field(name,EditText.class);android.text.Layout layout=input.getLayout();geometryCheck(input.getWidth()>=UiKit.dp(context,32),label+" keeps a usable editing width");geometryCheck(layout!=null&&layout.getLineCount()==1&&layout.getLineMax(0)<=input.getWidth()-input.getCompoundPaddingLeft()-input.getCompoundPaddingRight()+1,label+" value fits its native edit field");});}
     private void idle(){waitForIdleSync();SystemClock.sleep(180);}
     private List<View> rootViews(){return WindowInspector.getGlobalWindowViews();}
     private View findText(List<View> roots,String text){for(int r=roots.size()-1;r>=0;r--){View found=walk(roots.get(r),v->v instanceof TextView&&text.contentEquals(((TextView)v).getText()));if(found!=null)return found;}return null;}

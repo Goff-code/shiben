@@ -42,6 +42,31 @@ public final class ExportInstrumentationChecks {
     private static String read(File file) throws Exception {
         return new String(Files.readAllBytes(file.toPath()),StandardCharsets.UTF_8);
     }
+    /** Produces a deterministic image from the real export renderer for pixel review in QA only. */
+    private static void writeApprovedPreviewFixture(Context context, ExportWorker.Job job, Consumer<String> report) throws Exception {
+        List<LedgerStore.DayTask> rows=java.util.Arrays.asList(
+                new LedgerStore.DayTask("reading","阅读",1,100,.5,0,false,null),
+                new LedgerStore.DayTask("web3","Web3",2,60,.25,0,false,null),
+                new LedgerStore.DayTask("english","英语",3,0,.125,0,false,null),
+                new LedgerStore.DayTask("code","代码视频",4,0,.125,0,false,null));
+        LedgerStore.DaySnapshot sample=new LedgerStore.DaySnapshot(LocalDate.of(2026,10,5),rows,65,true,8_100_000,"D");
+        java.lang.reflect.Method planner=ExportWorker.class.getDeclaredMethod("planPages",LedgerStore.DaySnapshot.class);
+        planner.setAccessible(true);List<?> pages=(List<?>)planner.invoke(null,sample);
+        check(pages.size()==1,"approved four-task preview fits a single full PNG",report);
+        java.lang.reflect.Method render=ExportWorker.class.getDeclaredMethod("renderPage",LedgerStore.DaySnapshot.class,
+                pages.get(0).getClass(),int.class,int.class,android.graphics.Bitmap.class,File.class,ExportWorker.Job.class);
+        render.setAccessible(true);
+        android.graphics.Bitmap background=BitmapFactory.decodeResource(context.getResources(),R.drawable.export_today_blurred);
+        File image=new File(context.getFilesDir(),"qa-export-preview-2026-10-05.png");
+        try { render.invoke(null,sample,pages.get(0),1,1,background,image,job); }
+        finally { background.recycle(); }
+        DailyArchive.writeAtomicUtf8(new File(context.getFilesDir(),"qa-export-preview-2026-10-05.md"),
+                V2Reports.dailyMarkdown(sample).getBytes(StandardCharsets.UTF_8));
+        check(image.isFile()&&image.length()>0,"real renderer writes approved sample for visual review",report);
+        android.graphics.Paint paint=new android.graphics.Paint();paint.setTextSize(38);
+        String emoji="🧠阅读🧠";
+        check(String.join("",ExportWorker.wrapText(emoji,paint,1)).equals(emoji),"PNG wrapping preserves surrogate pairs at narrow widths",report);
+    }
     public static void run(Context context, Consumer<String> report) throws Exception {
         if(Looper.myLooper()==Looper.getMainLooper()) throw new AssertionError("Run export checks off main thread");
         ExportWorker worker=ExportWorker.get(context);
@@ -61,6 +86,14 @@ public final class ExportInstrumentationChecks {
         for(String title:titles) check(markdown.contains(V2Reports.markdownText(title)),"Markdown retains task: "+title.substring(0,Math.min(24,title.length())),report);
         check(md.result.markdownForCopy!=null&&md.result.markdownForCopy.equals(markdown),"copy contains complete Markdown",report);
         check(md.result.file.length()>0,"Markdown generated file is nonempty",report);
+        writeApprovedPreviewFixture(context, md, report);
+        check(markdown.startsWith("# "+today+"｜时本\n"),"Markdown uses approved date title",report);
+        check(markdown.split("(?m)^## ",-1).length-1==4,"daily Markdown has exactly four approved sections",report);
+        check(markdown.contains("## 今日投资注意力时长总计\n")&&markdown.contains("## 总完成度\n")
+                &&markdown.contains("## 当日任务与完成度\n")&&markdown.contains("## 当日结算等级\n"),
+                "daily Markdown includes attention, progress, all tasks, and settlement grade",report);
+        check(!markdown.contains("权重")&&!markdown.contains("毫秒")&&!markdown.contains("口径")
+                &&!markdown.contains("SQLite")&&!markdown.contains("专注明细"),"Markdown excludes technical metadata",report);
 
         try(LedgerStore store=new LedgerStore(context)) {
             java.lang.reflect.Method method=ExportWorker.class.getDeclaredMethod("planPages",LedgerStore.DaySnapshot.class);
@@ -68,6 +101,8 @@ public final class ExportInstrumentationChecks {
             List<?> planned=(List<?>)method.invoke(null,store.getDaySnapshot(today));
             java.util.Map<String,StringBuilder> names=new java.util.LinkedHashMap<>();
             for(Object page:planned) {
+                java.lang.reflect.Field height=page.getClass().getDeclaredField("height");height.setAccessible(true);
+                check(height.getInt(page)<=ExportWorker.PAGE_MAX_HEIGHT-92,"PNG planned content fits inside page without cropping",report);
                 java.lang.reflect.Field rows=page.getClass().getDeclaredField("rows");rows.setAccessible(true);
                 for(Object row:(List<?>)rows.get(page)) {
                     java.lang.reflect.Field taskField=row.getClass().getDeclaredField("task");taskField.setAccessible(true);
@@ -96,6 +131,13 @@ public final class ExportInstrumentationChecks {
         }
         check(pages==png.result.pageCount,"all rendered pages are in ZIP",report);
         check(png.result.previewImage!=null&&png.result.previewImage.isFile(),"PNG preview is first real output page",report);
+        android.graphics.Bitmap preview=BitmapFactory.decodeFile(png.result.previewImage.getAbsolutePath());
+        try {
+            int border=preview.getPixel(10,10), panel=preview.getPixel(80,250);
+            check(border!=panel,"PNG uses leaves backdrop and distinct legible panel",report);
+            check(android.graphics.Color.red(panel)>230&&android.graphics.Color.green(panel)>230
+                    &&android.graphics.Color.blue(panel)>230,"PNG content panel is near white",report);
+        } finally { preview.recycle(); }
 
         // Re-observation is the same contract used by an Activity after rotation.
         CountDownLatch observed=new CountDownLatch(1);
@@ -121,6 +163,10 @@ public final class ExportInstrumentationChecks {
         String all=read(combined.result.file);
         check(combined.result.dayCount>=2&&"text/markdown".equals(combined.result.mimeType),"multi-day Markdown is one combined file",report);
         check(all.contains(old.toString())&&all.contains(today.toString())&&all.contains("旧版导出测试"),"combined Markdown keeps both inclusive endpoints",report);
+        check(all.split("(?m)^# ",-1).length-1==combined.result.dayCount
+                &&all.split("(?m)^## ",-1).length-1==combined.result.dayCount*4,
+                "multi-day Markdown repeats only the five approved daily categories",report);
+        check(!all.contains("# 时本记录")&&!all.contains("范围："),"multi-day Markdown adds no report metadata",report);
         ExportWorker.Job multiple=await(worker,new ExportWorker.Request(V2Reports.DateRange.custom(old,today),ExportWorker.Format.PNG),report);
         check(multiple.result.dayCount>=2&&"application/zip".equals(multiple.result.mimeType),"multiple days PNG produce ZIP",report);
 
@@ -146,7 +192,7 @@ public final class ExportInstrumentationChecks {
         try(LedgerStore store=new LedgerStore(context)){store.deleteSession(oldSession.id);}
         until=SystemClock.elapsedRealtime()+30000;boolean removed=false;
         while(SystemClock.elapsedRealtime()<until) {
-            if(oldDaily.isFile())try{String content=read(oldDaily);removed=content.contains("## 口径与保存")&&content.contains("实际专注：**0秒**（0 毫秒）")&&!content.contains("| 3000 |");}catch(java.io.IOException retry){}
+            if(oldDaily.isFile())try{String content=read(oldDaily);removed=content.contains("## 今日投资注意力时长总计\n0秒\n")&&content.contains("## 当日结算等级\n未知\n")&&!content.contains("毫秒");}catch(java.io.IOException retry){}
             if(removed)break;SystemClock.sleep(100);
         }
         check(removed&&oldDaily.isFile(),"daily archive survives and updates focus totals after last session deletion",report);

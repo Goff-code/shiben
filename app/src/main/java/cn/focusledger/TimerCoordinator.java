@@ -12,6 +12,10 @@ import android.os.SystemClock;
 import android.provider.Settings;
 import cn.focusledger.core.Session;
 import cn.focusledger.core.TimerEngine;
+import java.time.LocalDate;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
 
 /** Single-process authority. Every state transition and terminal record is persisted atomically. */
 public final class TimerCoordinator {
@@ -106,6 +110,27 @@ public final class TimerCoordinator {
     }
     public synchronized long actualMs() {
         return engine.isActive() ? engine.currentActualMs(System.currentTimeMillis(),SystemClock.elapsedRealtime(),bootId()) : 0;
+    }
+    /** One read-only timer projection shared by the Today screen and exported reports.
+     * The clone uses the same monotonic clock/zone/segments as the actual timer, so
+     * pauses and midnight are accounted identically without saving a fake session.
+     */
+    private Session projectActiveSession() {
+        TimerEngine copy = new TimerEngine(engine.snapshot());
+        return copy.finish(System.currentTimeMillis(), SystemClock.elapsedRealtime(), bootId(), "report_preview");
+    }
+    public synchronized LedgerStore.DaySnapshot snapshotForDay(LocalDate day) {
+        synchronized (store) { return store.getDaySnapshot(day, projectActiveSession()); }
+    }
+    /** Captures all selected days at one instant before background formatting begins. */
+    public synchronized List<LedgerStore.DaySnapshot> snapshotsForDays(List<LocalDate> days) {
+        if (days == null) throw new IllegalArgumentException("日期不能为空");
+        synchronized (store) {
+            Session active = projectActiveSession();
+            List<LedgerStore.DaySnapshot> snapshots = new ArrayList<>(days.size());
+            for (LocalDate day : days) snapshots.add(store.getDaySnapshot(day, active));
+            return Collections.unmodifiableList(snapshots);
+        }
     }
     public synchronized long remainingMs() {
         TimerEngine.State state=engine.snapshot();

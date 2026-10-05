@@ -65,6 +65,7 @@ final class UiKit {
             case "sort":c.drawLine(5,7,23,7,p);c.drawLine(5,14,23,14,p);c.drawLine(5,21,23,21,p);break;
             case "chevron":c.drawLine(11,7,18,14,p);c.drawLine(18,14,11,21,p);break;
             case "down":c.drawLine(7,11,14,18,p);c.drawLine(14,18,21,11,p);break;
+            case "history-add":c.drawCircle(12,12,9,p);c.drawLine(12,6,12,12,p);c.drawLine(12,12,17,15,p);c.drawCircle(21,21,5,p);c.drawLine(21,18,21,24,p);c.drawLine(18,21,24,21,p);break;
             case "history":c.drawCircle(14,14,10,p);c.drawLine(14,7,14,14,p);c.drawLine(14,14,20,18,p);break;
             case "export":c.drawRoundRect(5,3,22,25,2,2,p);c.drawLine(9,11,18,11,p);c.drawLine(9,16,18,16,p);c.drawLine(9,21,15,21,p);break;
             case "info":c.drawCircle(14,14,10,p);c.drawLine(14,13,14,20,p);p.setStyle(Paint.Style.FILL);c.drawCircle(14,8,1,p);break;

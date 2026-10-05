@@ -2,8 +2,10 @@ package cn.focusledger;
 
 import android.content.Context;
 import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
 import android.graphics.Canvas;
 import android.graphics.Paint;
+import android.graphics.Path;
 import android.graphics.RectF;
 import android.graphics.Typeface;
 import android.net.Uri;
@@ -150,27 +152,29 @@ public final class ExportWorker {
         if (!directory.mkdirs() && !directory.isDirectory()) throw new IOException("无法创建导出文件夹");
         boolean success = false;
         try (LedgerStore store = new LedgerStore(app)) {
+            store.ensureToday();
             List<LocalDate> days = V2Reports.selectDays(store.getRecordedDays(), request.range);
             if (days.isEmpty()) throw new IOException("所选日期范围内没有留存记录");
-            job.total = days.size();
+            // Capture every requested date once, using one active-timer reading for the whole export.
+            // Later timer ticks or edits cannot change one page while another is being rendered.
+            List<LedgerStore.DaySnapshot> snapshots = TimerCoordinator.get(app).snapshotsForDays(days);
+            job.total = snapshots.size();
             Result result = request.format == Format.MARKDOWN
-                    ? generateMarkdown(store, request.range, days, directory, job)
-                    : generatePng(store, request.range, days, directory, job);
+                    ? generateMarkdown(request.range, snapshots, directory, job)
+                    : generatePng(request.range, snapshots, directory, job);
             success = true; return result;
         } finally {
             if (!success) removePartialFiles(directory);
         }
     }
-    private Result generateMarkdown(LedgerStore store, V2Reports.DateRange range, List<LocalDate> days,
+    private Result generateMarkdown(V2Reports.DateRange range, List<LedgerStore.DaySnapshot> snapshots,
                                     File directory, Job job) throws IOException {
         File target = new File(directory, range.fileStem() + ".md"), temporary = new File(directory, target.getName() + ".part");
         try (FileOutputStream fileOut = new FileOutputStream(temporary); BufferedOutputStream out = new BufferedOutputStream(fileOut)) {
-            if (days.size() > 1) write(out, "# 时本记录\n\n范围：" + range.label() + "（包含起止日期）\n\n"
-                    + "共 " + days.size() + " 个有留存记录的日期；未生成没有记录的日期。\n\n---\n\n");
-            for (int i = 0; i < days.size(); i++) {
-                job.checkCancelled(); LocalDate date = days.get(i);
-                write(out, V2Reports.dailyMarkdown(store.getDaySnapshot(date)));
-                if (i + 1 < days.size()) write(out, "\n---\n\n");
+            for (int i = 0; i < snapshots.size(); i++) {
+                job.checkCancelled();
+                write(out, V2Reports.dailyMarkdown(snapshots.get(i)));
+                if (i + 1 < snapshots.size()) write(out, "\n");
                 job.completed = i + 1; job.message = "已生成 " + job.completed + " / " + job.total + " 天"; emit(job);
             }
             out.flush(); fileOut.getFD().sync();
@@ -181,29 +185,34 @@ public final class ExportWorker {
         boolean truncated = copy == null;
         if (preview.length() > PREVIEW_CHARACTERS) { preview = preview.substring(0, PREVIEW_CHARACTERS); truncated = true; }
         if (truncated) preview += "\n\n（预览节选；保存的 Markdown 文件保留全部日期与全部任务。）";
-        return new Result(target, "text/markdown", null, preview, copy, truncated, days.size(), 0);
+        return new Result(target, "text/markdown", null, preview, copy, truncated, snapshots.size(), 0);
     }
-    private Result generatePng(LedgerStore store, V2Reports.DateRange range, List<LocalDate> days,
+    private Result generatePng(V2Reports.DateRange range, List<LedgerStore.DaySnapshot> snapshots,
                                File directory, Job job) throws IOException {
         List<File> images = new ArrayList<>();
-        for (LocalDate day : days) {
-            job.checkCancelled(); LedgerStore.DaySnapshot snapshot = store.getDaySnapshot(day);
-            List<Page> pages = planPages(snapshot);
-            for (int i = 0; i < pages.size(); i++) {
+        // Precomputed blur of the original Today leaves. Decode only once per export; no runtime blur.
+        Bitmap background = BitmapFactory.decodeResource(app.getResources(), R.drawable.export_today_blurred);
+        if (background == null) throw new IOException("无法读取导出背景");
+        try {
+            for (LedgerStore.DaySnapshot snapshot : snapshots) {
                 job.checkCancelled();
-                String name = "时本_" + day + (pages.size() == 1 ? "" : String.format(java.util.Locale.ROOT, "_第%03d页", i + 1)) + ".png";
-                File file = new File(directory, name);
-                renderPage(snapshot, pages.get(i), i + 1, pages.size(), file, job); images.add(file);
+                List<Page> pages = planPages(snapshot);
+                for (int i = 0; i < pages.size(); i++) {
+                    job.checkCancelled();
+                    String name = "时本_" + snapshot.day + (pages.size() == 1 ? "" : String.format(java.util.Locale.ROOT, "_第%03d页", i + 1)) + ".png";
+                    File file = new File(directory, name);
+                    renderPage(snapshot, pages.get(i), i + 1, pages.size(), background, file, job); images.add(file);
+                }
+                job.completed++; job.message = "已生成 " + job.completed + " / " + job.total + " 天 · " + images.size() + " 页"; emit(job);
             }
-            job.completed++; job.message = "已生成 " + job.completed + " / " + job.total + " 天 · " + images.size() + " 页"; emit(job);
-        }
-        if (images.size() == 1) return new Result(images.get(0), "image/png", images.get(0), null, null, false, days.size(), 1);
+        } finally { background.recycle(); }
+        if (images.size() == 1) return new Result(images.get(0), "image/png", images.get(0), null, null, false, snapshots.size(), 1);
         File zip = new File(directory, range.fileStem() + "_PNG.zip"), temporary = new File(directory, zip.getName() + ".part");
         try (ZipOutputStream out = new ZipOutputStream(new BufferedOutputStream(new FileOutputStream(temporary)))) {
             ZipEntry readme = new ZipEntry("导出说明.txt"); readme.setTime(0); out.putNextEntry(readme);
-            write(out, "时本 PNG 导出\n日期范围：" + range.label() + "\n共 " + days.size() + " 天、" + images.size()
+            write(out, "时本 PNG 导出\n日期范围：" + range.label() + "\n共 " + snapshots.size() + " 天、" + images.size()
                     + " 张图片。\n长任务列表按页输出；每页显示相同的日总进度，任务依次续接，不能把各页总时长相加。\n"
-                    + "每个任务的完整名称、优先级、权重、进度和实际专注均保留。\n" + V2Reports.LOCAL_DATA_WARNING + "\n");
+                    + "每个任务的完整名称和完成度均保留，并按当日留存优先级依次列出。\n" + V2Reports.LOCAL_DATA_WARNING + "\n");
             out.closeEntry();
             for (File file : images) {
                 job.checkCancelled(); ZipEntry entry = new ZipEntry(file.getName()); entry.setTime(0); out.putNextEntry(entry);
@@ -211,7 +220,7 @@ public final class ExportWorker {
             }
         }
         moveFinished(temporary, zip);
-        return new Result(zip, "application/zip", images.get(0), null, null, false, days.size(), images.size());
+        return new Result(zip, "application/zip", images.get(0), null, null, false, snapshots.size(), images.size());
     }
 
     /** User supplies the URI returned by ACTION_CREATE_DOCUMENT. Never launches a picker itself. */
@@ -259,29 +268,33 @@ public final class ExportWorker {
         directory.delete();
     }
 
-    // A fixed-size page means PNG memory is bounded independently of task count or date range.
+    // Fixed-size pages bound memory independently of task count and date range.
     static final int PAGE_WIDTH = 1080, PAGE_MAX_HEIGHT = 1600;
-    private static final int BG = 0xfffcfaf6, INK = 0xff172331, TEAL = 0xff116b73, MUTED = 0xff697078, LINE = 0xffe3e4e3;
-    private static final int TASK_TOP = 540, PAGE_BOTTOM = 112, CONTENT_BOTTOM = PAGE_MAX_HEIGHT - PAGE_BOTTOM;
-    private static final int TITLE_SIZE = 38, LINE_HEIGHT = 49, ROW_BASE = 130, MAX_LINES_PER_FRAGMENT = 8;
+    private static final int BG = 0xffe7efea, INK = 0xff102644, TEAL = 0xff13bdbb,
+            MUTED = 0xff617a8b, LINE = 0xffe0e7e9;
+    private static final int TASK_TOP = 698, PAGE_BOTTOM = 92, CONTENT_BOTTOM = PAGE_MAX_HEIGHT - PAGE_BOTTOM;
+    private static final int TITLE_SIZE = 38, LINE_HEIGHT = 49, ROW_BASE = 66, MAX_LINES_PER_FRAGMENT = 8;
+    private static final int TASK_TITLE_X = 198, TASK_TITLE_WIDTH = 710;
     private static final class Fragment {
         LedgerStore.DayTask task;
         List<String> lines;
-        boolean continuation;
-        int height() { return ROW_BASE + lines.size() * LINE_HEIGHT; }
+        boolean continuation, compact;
+        int height() { return compact ? 96 : ROW_BASE + lines.size() * LINE_HEIGHT; }
     }
     private static final class Page {
         final List<Fragment> rows = new ArrayList<>();
         int height = TASK_TOP;
     }
     private static List<Page> planPages(LedgerStore.DaySnapshot snapshot) {
-        Paint title = new Paint(Paint.ANTI_ALIAS_FLAG); title.setTextSize(TITLE_SIZE); title.setTypeface(Typeface.create("sans-serif", Typeface.NORMAL));
+        Paint title = new Paint(Paint.ANTI_ALIAS_FLAG); title.setTextSize(TITLE_SIZE);
+        title.setTypeface(Typeface.create("sans-serif", Typeface.NORMAL));
         List<Page> pages = new ArrayList<>(); Page current = new Page();
         for (LedgerStore.DayTask task : V2Reports.orderedTasks(snapshot)) {
-            List<String> lines = wrapText(task.title == null ? "未命名" : task.title, title, PAGE_WIDTH - 220);
+            List<String> lines = wrapText(task.title == null ? "未命名" : task.title, title, TASK_TITLE_WIDTH);
             for (int start = 0; start < lines.size(); start += MAX_LINES_PER_FRAGMENT) {
                 Fragment fragment = new Fragment(); fragment.task = task; fragment.continuation = start > 0;
                 fragment.lines = new ArrayList<>(lines.subList(start, Math.min(lines.size(), start + MAX_LINES_PER_FRAGMENT)));
+                fragment.compact = lines.size() == 1 && title.measureText(lines.get(0)) <= 230;
                 if (!current.rows.isEmpty() && current.height + fragment.height() > CONTENT_BOTTOM) {
                     pages.add(current); current = new Page();
                 }
@@ -311,52 +324,74 @@ public final class ExportWorker {
         return lines;
     }
     private static void renderPage(LedgerStore.DaySnapshot snapshot, Page page, int pageNumber,
-                                   int pageCount, File target, Job job) throws IOException {
-        int height = Math.min(PAGE_MAX_HEIGHT, Math.max(850, page.height + PAGE_BOTTOM));
+                                   int pageCount, Bitmap background, File target, Job job) throws IOException {
+        int height = Math.min(PAGE_MAX_HEIGHT, Math.max(990, page.height + PAGE_BOTTOM));
         Bitmap bitmap = Bitmap.createBitmap(PAGE_WIDTH, height, Bitmap.Config.ARGB_8888);
         try {
             Canvas canvas = new Canvas(bitmap); canvas.drawColor(BG);
-            Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG); paint.setTypeface(Typeface.create("sans-serif", Typeface.NORMAL));
-            text(canvas, paint, "时本 · " + snapshot.day.getMonthValue() + "月" + snapshot.day.getDayOfMonth() + "日", 64, 92, 48, INK, true);
-            text(canvas, paint, snapshot.day.toString(), 66, 139, 29, MUTED, false);
-            text(canvas, paint, pageNumber + " / " + pageCount, 906, 88, 28, MUTED, false);
-            float cx = 278, cy = 309, radius = 126;
-            paint.setStyle(Paint.Style.STROKE); paint.setStrokeWidth(20); paint.setStrokeCap(Paint.Cap.ROUND); paint.setColor(LINE);
+            Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG | Paint.FILTER_BITMAP_FLAG);
+            // Use the entire original-derived asset, without cropping any leaf or task content.
+            canvas.drawBitmap(background, null, new RectF(0, 0, PAGE_WIDTH, height), paint);
+            paint.setColor(0xf5ffffff);
+            canvas.drawRoundRect(new RectF(48, 48, PAGE_WIDTH - 48, height - 48), 38, 38, paint);
+            paint.setStyle(Paint.Style.STROKE); paint.setStrokeWidth(2); paint.setColor(0xccffffff);
+            canvas.drawRoundRect(new RectF(48, 48, PAGE_WIDTH - 48, height - 48), 38, 38, paint);
+            text(canvas, paint, "时本 · 今日记录", 104, 138, 49, INK, true);
+            text(canvas, paint, snapshot.day.getYear() + "年" + snapshot.day.getMonthValue() + "月"
+                    + snapshot.day.getDayOfMonth() + "日", 106, 192, 34, MUTED, false);
+            if (pageCount > 1) {
+                paint.setTextAlign(Paint.Align.RIGHT);
+                text(canvas, paint, pageNumber + " / " + pageCount, 974, 132, 27, MUTED, false);
+                paint.setTextAlign(Paint.Align.LEFT);
+            }
+
+            float cx = 270, cy = 368, radius = 125;
+            paint.setStyle(Paint.Style.STROKE); paint.setStrokeWidth(22); paint.setStrokeCap(Paint.Cap.ROUND); paint.setColor(0xffcfefec);
             canvas.drawCircle(cx, cy, radius, paint);
             if (Double.isFinite(snapshot.totalProgress) && snapshot.totalProgress > 0) {
                 paint.setColor(TEAL); canvas.drawArc(new RectF(cx - radius, cy - radius, cx + radius, cy + radius), -90,
                         (float) (Math.min(100, snapshot.totalProgress) * 3.6), false, paint);
             }
             paint.setStyle(Paint.Style.FILL); paint.setTextAlign(Paint.Align.CENTER);
-            text(canvas, paint, V2Reports.percent(snapshot.totalProgress), cx, cy + 23, 65, INK, false);
+            fittedText(canvas, paint, V2Reports.totalPercent(snapshot), cx, cy + 12, 70, 205, INK, true);
+            text(canvas, paint, "总完成度", cx, cy + 61, 30, MUTED, false);
             paint.setTextAlign(Paint.Align.LEFT);
-            text(canvas, paint, "优先级加权总进度", 477, 274, 36, INK, true);
-            text(canvas, paint, "实际专注 " + V2Reports.duration(snapshot.totalActualMs), 477, 330, 30, MUTED, false);
-            text(canvas, paint, "完整保留 " + snapshot.items.size() + " 项任务记录", 477, 377, 27, MUTED, false);
-            text(canvas, paint, snapshot.completeSnapshot ? "按当日优先级排序 · 手动更新任务进度" : "旧版快照不完整 · 缺失信息标为“未知”", 64, 482, 29, MUTED, false);
-            paint.setColor(LINE); canvas.drawRect(64, 511, PAGE_WIDTH - 64, 513, paint);
+            paint.setColor(LINE); canvas.drawRect(457, 260, 459, 486, paint);
+            text(canvas, paint, "今日投资注意力时长总计", 500, 323, 32, MUTED, false);
+            fittedText(canvas, paint, V2Reports.duration(snapshot.totalActualMs), 500, 400, 56, 468, INK, true);
+
+            paint.setColor(LINE); canvas.drawRect(102, 539, 978, 541, paint);
+            text(canvas, paint, "当日结算等级", 106, 602, 40, INK, true);
+            fittedText(canvas, paint, V2Reports.settlementGrade(snapshot), 490, 612, 69, 470, TEAL, true);
+            paint.setColor(LINE); canvas.drawRect(102, 638, 978, 640, paint);
+            text(canvas, paint, "当日任务与完成度", 106, 687, 40, INK, true);
+
             int y = TASK_TOP;
-            if (page.rows.isEmpty()) text(canvas, paint, "这一天没有留存任务清单", 64, y + 55, 32, MUTED, false);
+            if (page.rows.isEmpty()) text(canvas, paint, snapshot.completeSnapshot ? "无" : "未知", 106, y + 78, 36, MUTED, false);
             for (Fragment row : page.rows) {
                 job.checkCancelled(); LedgerStore.DayTask task = row.task;
-                String rank = task.rank < 1 ? "?" : Integer.toString(task.rank);
-                text(canvas, paint, rank, 65, y + 43, 30, MUTED, false);
-                int lineY = y + 43;
-                for (String line : row.lines) { text(canvas, paint, line, 139, lineY, TITLE_SIZE, INK, false); lineY += LINE_HEIGHT; }
-                String label = (task.archived ? "已归档 · " : "") + (row.continuation ? "名称续页 · " : "")
-                        + "权重 " + V2Reports.weight(task.weight) + " · 实际 " + V2Reports.duration(task.actualMs);
-                text(canvas, paint, label, 139, lineY + 4, 26, MUTED, false);
-                int barY = lineY + 44;
-                paint.setColor(LINE); canvas.drawRoundRect(new RectF(139, barY, 824, barY + 13), 7, 7, paint);
-                if (task.progress > 0) {
-                    paint.setColor(TEAL); canvas.drawRoundRect(new RectF(139, barY, 139 + 685 * Math.min(100, task.progress) / 100f, barY + 13), 7, 7, paint);
+                drawTaskBadge(canvas, paint, task.title, 143, y + 43, row.continuation);
+                int lineY = y + (row.compact ? 54 : 44);
+                for (String line : row.lines) {
+                    text(canvas, paint, line, TASK_TITLE_X, lineY, TITLE_SIZE, INK, false); lineY += LINE_HEIGHT;
                 }
-                text(canvas, paint, V2Reports.taskProgress(task.progress), 862, barY + 17, 28, INK, false);
-                paint.setColor(LINE); canvas.drawRect(64, y + row.height() - 10, PAGE_WIDTH - 64, y + row.height() - 8, paint);
+                int barY = row.compact ? y + 34 : lineY - 17;
+                int barX = row.compact ? 462 : TASK_TITLE_X;
+                paint.setColor(LINE); canvas.drawRoundRect(new RectF(barX, barY, 846, barY + 16), 8, 8, paint);
+                if (task.progress > 0) {
+                    paint.setColor(TEAL); canvas.drawRoundRect(new RectF(barX, barY,
+                            barX + (846 - barX) * Math.min(100, task.progress) / 100f, barY + 16), 8, 8, paint);
+                }
+                paint.setTextAlign(Paint.Align.RIGHT);
+                text(canvas, paint, V2Reports.taskProgress(task.progress), 973, barY + 20, 31, INK, false);
+                paint.setTextAlign(Paint.Align.LEFT);
                 y += row.height();
             }
-            text(canvas, paint, "第 " + pageNumber + " / " + pageCount + " 页 · " + (pageCount > 1 ? "任务列表依次续接，日总计勿重复相加" : "任务清单完整保留"), 64, height - 65, 25, MUTED, false);
-            text(canvas, paint, "本机记录不会自动过期；卸载或清除数据前请先导出", 64, height - 28, 24, MUTED, false);
+            if (pageCount > 1) {
+                paint.setTextAlign(Paint.Align.RIGHT);
+                text(canvas, paint, "第 " + pageNumber + " / " + pageCount + " 页", 974, height - 68, 23, MUTED, false);
+                paint.setTextAlign(Paint.Align.LEFT);
+            }
             File temporary = new File(target.getParentFile(), target.getName() + ".part");
             try (FileOutputStream out = new FileOutputStream(temporary)) {
                 if (!bitmap.compress(Bitmap.CompressFormat.PNG, 100, out)) throw new IOException("无法生成 PNG");
@@ -364,6 +399,47 @@ public final class ExportWorker {
             }
             moveFinished(temporary, target);
         } finally { bitmap.recycle(); }
+    }
+    /** Decorative vector cues match the approved card and do not add report metadata. */
+    private static void drawTaskBadge(Canvas canvas, Paint paint, String title, float cx, float cy, boolean continuation) {
+        paint.setStyle(Paint.Style.FILL); paint.setColor(0xffd4f1ee); canvas.drawCircle(cx, cy, 36, paint);
+        if (continuation) {
+            paint.setTextAlign(Paint.Align.CENTER);
+            text(canvas, paint, "续", cx, cy + 11, 30, 0xff167e83, false);
+            paint.setTextAlign(Paint.Align.LEFT); return;
+        }
+        String name=title==null?"":title.toLowerCase(java.util.Locale.ROOT);
+        canvas.save(); canvas.translate(cx - 24, cy - 24); canvas.scale(48f / 28, 48f / 28);
+        paint.setStyle(Paint.Style.STROKE); paint.setStrokeWidth(1.7f); paint.setStrokeCap(Paint.Cap.ROUND);
+        paint.setStrokeJoin(Paint.Join.ROUND); paint.setColor(0xff148d96);
+        Path path=new Path();
+        if (name.contains("阅读") || name.contains("读书") || name.contains("看书") || name.contains("read") || name.contains("book")) {
+            path.moveTo(14,6);path.cubicTo(10,3,6,3,3,5);path.lineTo(3,24);
+            path.cubicTo(7,22,11,22,14,25);path.cubicTo(17,22,21,22,25,24);
+            path.lineTo(25,5);path.cubicTo(21,3,17,3,14,6);path.lineTo(14,25);canvas.drawPath(path,paint);
+        } else if (name.contains("web3") || name.contains("web 3")) {
+            canvas.save();canvas.rotate(-45,14,14);
+            canvas.drawRoundRect(new RectF(2,9,17,19),5,5,paint);canvas.drawRoundRect(new RectF(11,9,26,19),5,5,paint);
+            canvas.restore();
+        } else if (name.contains("英语") || name.contains("english")) {
+            path.moveTo(2,10);path.lineTo(14,4);path.lineTo(26,10);path.lineTo(14,16);path.close();
+            canvas.drawPath(path,paint);path.rewind();path.moveTo(7,13);path.lineTo(7,21);
+            path.quadTo(14,26,21,21);path.lineTo(21,13);canvas.drawPath(path,paint);canvas.drawLine(26,10,26,20,paint);
+        } else if (name.contains("代码") || name.contains("编程") || name.contains("视频") || name.contains("code") || name.contains("coding")) {
+            canvas.drawLine(8,7,2,14,paint);canvas.drawLine(2,14,8,21,paint);
+            canvas.drawLine(20,7,26,14,paint);canvas.drawLine(26,14,20,21,paint);canvas.drawLine(17,3,11,25,paint);
+        } else {
+            canvas.drawRoundRect(new RectF(5,3,23,25),2,2,paint);
+            canvas.drawLine(9,9,19,9,paint);canvas.drawLine(9,14,19,14,paint);canvas.drawLine(9,19,16,19,paint);
+        }
+        canvas.restore();paint.setStyle(Paint.Style.FILL);
+    }
+    private static void fittedText(Canvas canvas, Paint paint, String value, float x, float y,
+                                   float size, float maxWidth, int color, boolean bold) {
+        paint.setTypeface(Typeface.create("sans-serif", bold ? Typeface.BOLD : Typeface.NORMAL));
+        paint.setTextSize(size);
+        float width = paint.measureText(value);
+        text(canvas, paint, value, x, y, width > maxWidth ? size * maxWidth / width : size, color, bold);
     }
     private static void text(Canvas canvas, Paint paint, String value, float x, float y, float size, int color, boolean bold) {
         paint.setStyle(Paint.Style.FILL); paint.setColor(color); paint.setTextSize(size);
