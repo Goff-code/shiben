@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 import sqlite3
 import sys
+import xml.etree.ElementTree as ET
 before, after = map(Path, sys.argv[1:3])
 
 def tables(root):
@@ -33,3 +34,15 @@ a, b = archive(before), archive(after)
 assert a and a == b, 'durable daily Markdown changed or disappeared across update'
 print(f'PASS {len(a)} durable Markdown files retain exact SHA256')
 print('PASS same-signature package update retained all captured logical database data and daily files')
+
+# Preferences are read semantically: Android may reorder XML attributes or elements.
+def preferences(root):
+    result = {}
+    for path in sorted((root / 'shared_prefs').glob('*.xml')):
+        result[path.name] = {child.attrib['name']: (child.tag, child.attrib.get('value'), child.text, sorted(x.text for x in child)) for child in ET.parse(path).getroot()}
+    return result
+p, q = preferences(before), preferences(after)
+assert p, 'pre-update snapshot contains no shared preferences'
+assert p == q, 'shared preferences changed or disappeared across package update'
+for name, values in p.items():
+    print(f'PASS unchanged shared preferences {name}: {len(values)} keys')

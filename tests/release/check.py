@@ -42,7 +42,7 @@ if len(sys.argv) >= 3:
           "supplied public fingerprint matches the pinned V2 certificate")
 check("Signer #1 certificate SHA-256 digest: " + fingerprint in signature, "expected pinned public release certificate")
 check(fingerprint not in ("21448561864130135118013f194f94187e8ad887086351c395da230193996261", "2bdb75da4e44bff3b8d38cce39807d67e11b6868c965fac23d22812cf7492045"), "new user-controlled V2 signing identity")
-check("package: name='cn.goff.shiben' versionCode='3' versionName='2.0.0'" in badging, "independent package and release version")
+check("package: name='cn.goff.shiben' versionCode='4' versionName='2.0.1'" in badging, "independent package and release version")
 check("application-label:'时本'" in badging, "installed app label")
 check("launchable-activity: name='cn.focusledger.MainActivity'" in badging, "launcher resolves the retained Java namespace")
 check("sdkVersion:'26'" in badging and "targetSdkVersion:'35'" in badging, "minimum and target SDK")

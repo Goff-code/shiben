@@ -1,0 +1,16 @@
+<resources>
+<style name="ShibenDialog" parent="android:style/Theme.Material.Light.Dialog.Alert">
+<item name="android:fontFamily">sans</item><item name="android:colorAccent">#086C72</item>
+<item name="android:windowBackground">@drawable/dialog_panel</item>
+<item name="android:windowMinWidthMajor">88%</item><item name="android:windowMinWidthMinor">88%</item>
+<item name="android:buttonBarPositiveButtonStyle">@style/ShibenDialogPositive</item>
+<item name="android:buttonBarNegativeButtonStyle">@style/ShibenDialogNegative</item>
+</style>
+<style name="ShibenDialogPositive" parent="android:style/Widget.Material.Button.Borderless">
+<item name="android:background">@drawable/dialog_primary</item><item name="android:textColor">#FFFFFF</item>
+<item name="android:textAllCaps">false</item><item name="android:minHeight">48dp</item>
+</style>
+<style name="ShibenDialogNegative" parent="android:style/Widget.Material.Button.Borderless">
+<item name="android:textColor">#086C72</item><item name="android:textAllCaps">false</item><item name="android:minHeight">48dp</item>
+</style>
+</resources>
