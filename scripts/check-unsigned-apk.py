@@ -40,7 +40,7 @@ with zipfile.ZipFile(apk) as archive:
     check(not any(n.lower().endswith(('.jks', '.keystore', '.p12', '.pem')) for n in names), 'no private keys or certificate files bundled')
     check(not any(n.startswith('lib/') for n in names), 'no native libraries or ABI restrictions')
     dex = b''.join(archive.read(n) for n in names if re.fullmatch(r'classes\d*\.dex', n))
-    check(b'LedgerInstrumentation' not in dex and b'StoreV2Instrumentation' not in dex and b'ExportInstrumentationChecks' not in dex and b'AttentionV202Instrumentation' not in dex, 'test runners absent')
+    check(b'LedgerInstrumentation' not in dex and b'StoreV2Instrumentation' not in dex and b'ExportInstrumentationChecks' not in dex and b'AttentionV202Instrumentation' not in dex and b'GalleryInstrumentationChecks' not in dex and b'RangeSummaryInstrumentationChecks' not in dex, 'test runners absent')
     check('专注账本'.encode() not in dex, 'legacy visible brand absent')
     check('导出分页测试'.encode() not in dex and not any(n.lower().endswith(('.db', '.sqlite', '.sqlite3')) for n in names), 'no packaged test fixtures or prefilled database')
 print(f'PASS ({count} checks): unsigned release packaging only, no signature or installability claim')
