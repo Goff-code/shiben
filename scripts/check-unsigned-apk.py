@@ -27,7 +27,7 @@ def check(condition, label):
 badging = command(tools / 'aapt', 'dump', 'badging', apk)
 manifest = command(tools / 'aapt', 'dump', 'xmltree', apk, 'AndroidManifest.xml')
 command(tools / 'zipalign', '-c', '-p', '4', apk)
-check("package: name='cn.goff.shiben' versionCode='5' versionName='2.0.2'" in badging, 'stable identity and 2.0.2 version')
+check("package: name='cn.goff.shiben' versionCode='6' versionName='2.0.3'" in badging, 'stable identity and 2.0.3 version')
 check("application-label:'时本'" in badging, 'installed app label')
 check("launchable-activity: name='cn.focusledger.MainActivity'" in badging, 'launcher activity resolves')
 check("sdkVersion:'26'" in badging and "targetSdkVersion:'35'" in badging, 'Android API26 minimum / API35 target')

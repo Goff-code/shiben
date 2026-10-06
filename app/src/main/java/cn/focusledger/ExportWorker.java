@@ -31,8 +31,7 @@ import java.util.concurrent.CancellationException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.zip.ZipEntry;
-import java.util.zip.ZipOutputStream;
+import java.util.Collections;
 
 /** Application-scoped export jobs. No bitmap rendering, DB scan or document copy on the UI thread. */
 public final class ExportWorker {
@@ -45,22 +44,34 @@ public final class ExportWorker {
     public static final class Request {
         public final V2Reports.DateRange range;
         public final Format format;
-        public Request(V2Reports.DateRange range, Format format) {
+        public final boolean hideTaskDetails;
+        public Request(V2Reports.DateRange range, Format format) { this(range, format, false); }
+        public Request(V2Reports.DateRange range, Format format, boolean hideTaskDetails) {
             if (range == null || format == null) throw new IllegalArgumentException("请选择日期和导出格式");
-            this.range = range; this.format = format;
+            this.range = range; this.format = format; this.hideTaskDetails = format == Format.PNG && hideTaskDetails;
         }
     }
     public static final class Result {
         public final File file, previewImage;
+        public final List<File> images;
+        public final List<Uri> savedImages;
         public final String mimeType, fileName, markdownPreview, markdownForCopy;
         public final boolean previewTruncated;
         public final int dayCount, pageCount;
         Result(File file, String mimeType, File previewImage, String markdownPreview,
                String markdownForCopy, boolean previewTruncated, int dayCount, int pageCount) {
+            this(file, mimeType, previewImage, markdownPreview, markdownForCopy, previewTruncated,
+                    dayCount, pageCount, previewImage == null ? Collections.emptyList() : Collections.singletonList(previewImage), Collections.emptyList());
+        }
+        Result(File file, String mimeType, File previewImage, String markdownPreview,
+               String markdownForCopy, boolean previewTruncated, int dayCount, int pageCount,
+               List<File> images, List<Uri> savedImages) {
             this.file = file; this.fileName = file.getName(); this.mimeType = mimeType;
             this.previewImage = previewImage; this.markdownPreview = markdownPreview;
             this.markdownForCopy = markdownForCopy; this.previewTruncated = previewTruncated;
             this.dayCount = dayCount; this.pageCount = pageCount;
+            this.images = Collections.unmodifiableList(new ArrayList<>(images));
+            this.savedImages = Collections.unmodifiableList(new ArrayList<>(savedImages));
         }
     }
     public final class Job {
@@ -70,13 +81,15 @@ public final class ExportWorker {
         public volatile String message = "等待导出", error;
         public volatile Result result;
         private volatile Listener listener;
+        private boolean committed;
         private final AtomicBoolean cancelled = new AtomicBoolean(), callbackPending = new AtomicBoolean();
         private Job(Listener listener) { this.listener = listener; }
         public boolean isTerminal() { return state == State.SUCCEEDED || state == State.FAILED || state == State.CANCELLED; }
-        public void cancel() {
-            if (isTerminal()) return;
+        public synchronized void cancel() {
+            if (isTerminal() || committed) return;
             cancelled.set(true); message = "正在取消"; emit(this);
         }
+        private synchronized void commit() { checkCancelled(); committed = true; }
         private void checkCancelled() {
             if (cancelled.get() || Thread.currentThread().isInterrupted()) throw new CancellationException("已取消导出");
         }
@@ -161,7 +174,7 @@ public final class ExportWorker {
             job.total = snapshots.size();
             Result result = request.format == Format.MARKDOWN
                     ? generateMarkdown(request.range, snapshots, directory, job)
-                    : generatePng(request.range, snapshots, directory, job);
+                    : generatePng(request.range, snapshots, directory, job, request.hideTaskDetails);
             success = true; return result;
         } finally {
             if (!success) removePartialFiles(directory);
@@ -189,6 +202,17 @@ public final class ExportWorker {
     }
     private Result generatePng(V2Reports.DateRange range, List<LedgerStore.DaySnapshot> snapshots,
                                File directory, Job job) throws IOException {
+        return generatePng(range, snapshots, directory, job, false);
+    }
+    private Result generatePng(V2Reports.DateRange range, List<LedgerStore.DaySnapshot> snapshots,
+                               File directory, Job job, boolean hideTaskDetails) throws IOException {
+        if (range.isAll() || !range.start.equals(range.end)) {
+            RangeSummary summary = RangeSummary.create(range, snapshots, job::checkCancelled);
+            File image = new File(directory, range.fileStem() + "_汇总.png");
+            RangeSummaryRenderer.render(app, summary, image, job::checkCancelled, hideTaskDetails);
+            job.completed = snapshots.size();
+            return new Result(image, "image/png", image, null, null, false, snapshots.size(), 1);
+        }
         List<File> images = new ArrayList<>();
         // Precomputed blur of the original Today leaves. Decode only once per export; no runtime blur.
         Bitmap background = BitmapFactory.decodeResource(app.getResources(), R.drawable.export_today_blurred);
@@ -196,31 +220,39 @@ public final class ExportWorker {
         try {
             for (LedgerStore.DaySnapshot snapshot : snapshots) {
                 job.checkCancelled();
-                List<Page> pages = planPages(snapshot);
+                List<Page> pages = hideTaskDetails ? Collections.singletonList(new Page()) : planPages(snapshot);
                 for (int i = 0; i < pages.size(); i++) {
                     job.checkCancelled();
                     String name = "时本_" + snapshot.day + (pages.size() == 1 ? "" : String.format(java.util.Locale.ROOT, "_第%03d页", i + 1)) + ".png";
                     File file = new File(directory, name);
-                    renderPage(snapshot, pages.get(i), i + 1, pages.size(), background, file, job); images.add(file);
+                    renderPage(snapshot, pages.get(i), i + 1, pages.size(), background, file, job, hideTaskDetails); images.add(file);
                 }
                 job.completed++; job.message = "已生成 " + job.completed + " / " + job.total + " 天 · " + images.size() + " 页"; emit(job);
             }
         } finally { background.recycle(); }
-        if (images.size() == 1) return new Result(images.get(0), "image/png", images.get(0), null, null, false, snapshots.size(), 1);
-        File zip = new File(directory, range.fileStem() + "_PNG.zip"), temporary = new File(directory, zip.getName() + ".part");
-        try (ZipOutputStream out = new ZipOutputStream(new BufferedOutputStream(new FileOutputStream(temporary)))) {
-            ZipEntry readme = new ZipEntry("导出说明.txt"); readme.setTime(0); out.putNextEntry(readme);
-            write(out, "时本 PNG 导出\n日期范围：" + range.label() + "\n共 " + snapshots.size() + " 天、" + images.size()
-                    + " 张图片。\n长任务列表按页输出；每页显示相同的日总进度，任务依次续接，不能把各页总时长相加。\n"
-                    + "每个任务的完整名称和完成度均保留，并按当日留存优先级依次列出。\n" + V2Reports.LOCAL_DATA_WARNING + "\n");
-            out.closeEntry();
-            for (File file : images) {
-                job.checkCancelled(); ZipEntry entry = new ZipEntry(file.getName()); entry.setTime(0); out.putNextEntry(entry);
-                copyFile(file, out, job); out.closeEntry();
-            }
-        }
-        moveFinished(temporary, zip);
-        return new Result(zip, "application/zip", images.get(0), null, null, false, snapshots.size(), images.size());
+        return new Result(images.get(0), "image/png", images.get(0), null, null, false,
+                snapshots.size(), images.size(), images, Collections.emptyList());
+    }
+
+    /** Explicit save action; source PNGs have been fully generated before any album row is inserted. */
+    public Job saveToGallery(Result source, Listener listener) {
+        if (source == null || source.images.isEmpty() || !"image/png".equals(source.mimeType))
+            throw new IllegalArgumentException("请先生成 PNG 图片");
+        Job job = createJob(listener);
+        executor.execute(() -> run(job, () -> {
+            job.message = "正在保存到相册"; job.total = source.images.size(); emit(job);
+            List<Uri> saved = GalleryWriter.save(app, source.images, job.id.substring(0, 8), new GalleryTransaction.Control() {
+                @Override public void checkCancelled() { job.checkCancelled(); }
+                @Override public void progress(int completed, int total) {
+                    job.completed = completed; job.total = total;
+                    job.message = "正在保存到相册 " + completed + " / " + total; emit(job);
+                }
+                @Override public void commit() { job.commit(); }
+            });
+            return new Result(source.file, source.mimeType, source.previewImage, null, null, false,
+                    source.dayCount, source.pageCount, source.images, saved);
+        }));
+        return job;
     }
 
     /** User supplies the URI returned by ACTION_CREATE_DOCUMENT. Never launches a picker itself. */
@@ -237,7 +269,7 @@ public final class ExportWorker {
             }
             job.completed = 1; job.total = 1;
             String name = source.getName();
-            String mime = name.endsWith(".png") ? "image/png" : name.endsWith(".zip") ? "application/zip" : "text/markdown";
+            String mime = name.endsWith(".png") ? "image/png" : "text/markdown";
             return new Result(source, mime, null, null, null, false, 0, 0);
         }));
         return job;
@@ -325,7 +357,11 @@ public final class ExportWorker {
     }
     private static void renderPage(LedgerStore.DaySnapshot snapshot, Page page, int pageNumber,
                                    int pageCount, Bitmap background, File target, Job job) throws IOException {
-        int height = Math.min(PAGE_MAX_HEIGHT, Math.max(990, page.height + PAGE_BOTTOM));
+        renderPage(snapshot, page, pageNumber, pageCount, background, target, job, false);
+    }
+    private static void renderPage(LedgerStore.DaySnapshot snapshot, Page page, int pageNumber,
+                                   int pageCount, Bitmap background, File target, Job job, boolean hideTaskDetails) throws IOException {
+        int height = hideTaskDetails ? 710 : Math.min(PAGE_MAX_HEIGHT, Math.max(990, page.height + PAGE_BOTTOM));
         Bitmap bitmap = Bitmap.createBitmap(PAGE_WIDTH, height, Bitmap.Config.ARGB_8888);
         try {
             Canvas canvas = new Canvas(bitmap); canvas.drawColor(BG);
@@ -363,6 +399,7 @@ public final class ExportWorker {
             paint.setColor(LINE); canvas.drawRect(102, 539, 978, 541, paint);
             text(canvas, paint, "当日结算等级", 106, 602, 40, INK, true);
             fittedText(canvas, paint, V2Reports.settlementGrade(snapshot), 490, 612, 69, 470, TEAL, true);
+            if (!hideTaskDetails) {
             paint.setColor(LINE); canvas.drawRect(102, 638, 978, 640, paint);
             text(canvas, paint, "当日任务与完成度", 106, 687, 40, INK, true);
 
@@ -391,6 +428,7 @@ public final class ExportWorker {
                 paint.setTextAlign(Paint.Align.RIGHT);
                 text(canvas, paint, "第 " + pageNumber + " / " + pageCount + " 页", 974, height - 68, 23, MUTED, false);
                 paint.setTextAlign(Paint.Align.LEFT);
+            }
             }
             File temporary = new File(target.getParentFile(), target.getName() + ".part");
             try (FileOutputStream out = new FileOutputStream(temporary)) {

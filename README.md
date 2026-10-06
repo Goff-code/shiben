@@ -1,4 +1,4 @@
-# 时本 2.0.2
+# 时本 2.0.3
 
 记录每一份注意力，投资你想成为的人。
 
@@ -12,7 +12,7 @@
 - 更多位于今日底部，进入补记注意力时长、历史、提醒/权限、备份、说明和导出。补记支持实际小时/分钟及历史日期，不改变任务进度。
 - 今日显示累计投资注意力时长；结算等级仅依加权完成度原值计算。真正100%默认S，才可按日选择S/SS/SSS/SSS+，退回未完成会清除选择。
 - 每日任务快照冻结名称、顺序、权重及进度；专注实际时长按记录时区跨日分摊。历史不自动过期，旧版未知信息明确标记。
-- 日/月/年/自定义（含起止）/全部范围 Markdown 与 PNG；Markdown仅含日期与品牌、注意力总时长、总完成度、任务及各完成度、结算等级；PNG使用模糊绿叶底与近白面板。Markdown 支持完整复制（大文件改为保存），长图片完整分页，多日 PNG 为 ZIP。
+- 日/月/年/自定义（含起止）/全部范围 Markdown 与 PNG；Markdown仅含日期与品牌、注意力总时长、总完成度、任务及各完成度、结算等级；PNG使用模糊绿叶底与近白面板。Markdown 支持完整复制（大文件改为保存），单日长图片完整分页，Android10+可直接保存相册；多日期PNG汇总成一张长图。PNG可选择隐藏全部任务细节，生成紧凑摘要图。
 - 每日 Markdown 原子写入内部持久目录，SQLite 为源；可选择外部文件夹自动备份。卸载或清除数据会丢失内部记录，当前无自动导入。
 
 ## 构建与验证
@@ -26,13 +26,13 @@ python3 tests/branding/check.py .
 python3 scripts/check-unsigned-apk.py app/build/outputs/apk/release/app-release-unsigned.apk
 ```
 
-云端隔离工具可使用 `scripts/build-cloud.sh`。本次工具精确版本、环境恢复与正式升级操作见 [Android云端QA说明](docs/ANDROID_CLOUD_QA.md)。当前验收见 `docs/TEST_REPORT_2.0.2.md`，运行器历史说明见 `docs/TEST_REPORT_V2.md`；较早版本报告不替代本次结果。设计参考见 `docs/design/v2`，实际截图另行交付。
+云端隔离工具可使用 `scripts/build-cloud.sh`。本次工具精确版本、环境恢复与正式升级操作见 [Android云端QA说明](docs/ANDROID_CLOUD_QA.md)。当前验收见 `docs/TEST_REPORT_2.0.3.md`，运行器历史说明见 `docs/TEST_REPORT_V2.md`；较早版本报告不替代本次结果。设计参考见 `docs/design/v2`，实际截图另行交付。
 
-2.0.2已完成双系统业务／布局验证、最终正式签名核验及API35正式code4至5无清数据覆盖升级。正式升级的UiAutomator整套驱动曾中断，最终通过真实界面输入、截图和严格数据比较验收：旧列／偏好／Markdown语义30项、暂停计时9项保留检查通过。各候选差异、环境异常及实机限制均记录在本次报告中。
+此前2.0.2已完成双系统业务／布局验证、最终正式签名核验及API35正式code4至5无清数据覆盖升级。正式升级的UiAutomator整套驱动曾中断，最终通过真实界面输入、截图和严格数据比较验收：旧列／偏好／Markdown语义30项、暂停计时9项保留检查通过。各候选差异、环境异常及实机限制记录在2.0.2报告中。2.0.3新增相册保存、区间汇总及任务明细隐藏，详见 `docs/UPGRADE_2.0.3.md`；本版正式签名与升级状态须以2.0.3报告为准。
 
 ## 安装与签名
 
-安装身份保持 `cn.goff.shiben`；2.0.2 / code5 / min26 / target35。release 默认未签名。
+安装身份保持 `cn.goff.shiben`；2.0.3 / code6 / min26 / target35。release 默认未签名。
 
 既有 V2 正式密钥由用户 Mac 本机保管；云端没有收到私钥或密码。公开证书保存在 `docs/SHIBEN_V2_RELEASE_CERTIFICATE.pem`。2.0.2 的正式签名和同证书覆盖升级状态见 `docs/TEST_REPORT_2.0.2.md`，既有签名记录见 `docs/RELEASE_V2_VERIFICATION.md`。云端 debug 仅测试；2.0.2 及未来版本必须保持相同包名、V2 正式证书和更大的 versionCode。2.0.2 的非破坏迁移与每日文件格式变更见 `docs/UPGRADE_2.0.2.md`。详情见 `docs/INSTALL_AND_BACKUP.md`、`docs/SIGNING_KEY_RECOVERY.md`。不要上传私钥或密码。
 

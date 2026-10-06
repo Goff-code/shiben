@@ -17,8 +17,6 @@ import java.util.List;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Consumer;
-import java.util.zip.ZipEntry;
-import java.util.zip.ZipFile;
 
 /** Destructive fixtures ONLY in a disposable emulator, invoked by the test APK's runner. */
 public final class ExportInstrumentationChecks {
@@ -116,20 +114,17 @@ public final class ExportInstrumentationChecks {
                     "PNG planner preserves full task name: "+title.substring(0,Math.min(24,title.length())),report);
         }
         ExportWorker.Job png=await(worker,new ExportWorker.Request(V2Reports.DateRange.day(today),ExportWorker.Format.PNG),report);
-        check("application/zip".equals(png.result.mimeType)&&png.result.pageCount>1,"long daily PNG exports paginated ZIP",report);
+        check("image/png".equals(png.result.mimeType)&&png.result.pageCount>1,"long daily PNG produces individual images, never ZIP",report);
         int pages=0;
-        try(ZipFile zip=new ZipFile(png.result.file)) {
-            java.util.Enumeration<? extends ZipEntry> entries=zip.entries();
-            while(entries.hasMoreElements()) {
-                ZipEntry entry=entries.nextElement(); if(!entry.getName().endsWith(".png")) continue;
-                pages++; BitmapFactory.Options options=new BitmapFactory.Options(); options.inJustDecodeBounds=true;
-                try(java.io.InputStream input=zip.getInputStream(entry)) { BitmapFactory.decodeStream(input,null,options); }
-                check(options.outWidth==ExportWorker.PAGE_WIDTH&&options.outHeight<=ExportWorker.PAGE_MAX_HEIGHT,
-                        "PNG page uses bounded bitmap dimensions: "+pages,report);
-            }
-            check(zip.getEntry("导出说明.txt")!=null,"ZIP includes pagination instructions",report);
+        for(File image:png.result.images) {
+            pages++; BitmapFactory.Options options=new BitmapFactory.Options();options.inJustDecodeBounds=true;
+            BitmapFactory.decodeFile(image.getAbsolutePath(),options);
+            check("image/png".equals(options.outMimeType)&&options.outWidth==ExportWorker.PAGE_WIDTH&&options.outHeight<=ExportWorker.PAGE_MAX_HEIGHT,
+                    "real PNG uses bounded bitmap dimensions: "+pages,report);
+            check(image.getName().endsWith(".png"),"individual image has PNG filename: "+pages,report);
         }
-        check(pages==png.result.pageCount,"all rendered pages are in ZIP",report);
+        check(pages==png.result.pageCount,"all rendered pages are retained as individual PNGs",report);
+        check(!png.result.file.getName().endsWith(".zip"),"PNG export primary file is not a ZIP",report);
         check(png.result.previewImage!=null&&png.result.previewImage.isFile(),"PNG preview is first real output page",report);
         android.graphics.Bitmap preview=BitmapFactory.decodeFile(png.result.previewImage.getAbsolutePath());
         try {
@@ -167,8 +162,14 @@ public final class ExportInstrumentationChecks {
                 &&all.split("(?m)^## ",-1).length-1==combined.result.dayCount*4,
                 "multi-day Markdown repeats only the five approved daily categories",report);
         check(!all.contains("# 时本记录")&&!all.contains("范围："),"multi-day Markdown adds no report metadata",report);
-        ExportWorker.Job multiple=await(worker,new ExportWorker.Request(V2Reports.DateRange.custom(old,today),ExportWorker.Format.PNG),report);
-        check(multiple.result.dayCount>=2&&"application/zip".equals(multiple.result.mimeType),"multiple days PNG produce ZIP",report);
+        // This fixture deliberately includes a 1,200-character title plus 42 tasks.
+        // A multi-date report must remain one readable image, so excessive size is an explicit error.
+        ExportWorker.Job multiple=worker.start(new ExportWorker.Request(V2Reports.DateRange.custom(old,today),ExportWorker.Format.PNG),null);
+        long summaryDeadline=SystemClock.elapsedRealtime()+90000;
+        while(!multiple.isTerminal()&&SystemClock.elapsedRealtime()<summaryDeadline)SystemClock.sleep(100);
+        check(multiple.state==ExportWorker.State.FAILED&&multiple.error!=null&&multiple.error.contains("单张"),
+                "oversized multi-date summary fails clearly instead of ZIP, split or truncation",report);
+        check(multiple.result==null,"oversized summary exposes no incomplete image result",report);worker.detach(multiple.id);
 
         CountDownLatch failed=new CountDownLatch(1);
         ExportWorker.Job copy=worker.copyToDocument(md.result.file,Uri.parse("content://cn.goff.shiben.no-such-provider/document/blocked"),job->{if(job.isTerminal())failed.countDown();});
