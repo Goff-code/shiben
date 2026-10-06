@@ -35,6 +35,8 @@ public final class RangeSummaryRenderer {
     private static final int LEFT = 106, RIGHT = 974, TITLE_X = 198, TITLE_WIDTH = RIGHT - TITLE_X;
     private static final int TITLE_SIZE = 38, TITLE_LINE = 49, NOTE_SIZE = 29, NOTE_LINE = 39;
     private static final int META_SIZE = 27, META_LINE = 37, ROW_EXTRA = 65, BOTTOM = 82;
+    static final String PROGRESS_CAPTION = "日均总完成度";
+    static final int CAPTION_SIZE = 27, CAPTION_BASELINE_OFFSET = 60, PROGRESS_RADIUS = 125, RING_STROKE_WIDTH = 22;
 
     private RangeSummaryRenderer() { }
 
@@ -249,8 +251,8 @@ public final class RangeSummaryRenderer {
         text(canvas, paint, "共 " + summary.recordedDayCount + " 个留存日 · 进度未知 "
                 + (summary.recordedDayCount - summary.knownProgressDayCount) + " 天", LEFT, 242, 29, MUTED, false);
 
-        float cx = 270, cy = 413, radius = 125;
-        paint.setStyle(Paint.Style.STROKE); paint.setStrokeWidth(22); paint.setStrokeCap(Paint.Cap.ROUND);
+        float cx = 270, cy = 413, radius = PROGRESS_RADIUS;
+        paint.setStyle(Paint.Style.STROKE); paint.setStrokeWidth(RING_STROKE_WIDTH); paint.setStrokeCap(Paint.Cap.ROUND);
         paint.setColor(0xffcfefec); canvas.drawCircle(cx, cy, radius, paint);
         if (Double.isFinite(summary.meanDailyProgress) && summary.meanDailyProgress > 0) {
             paint.setColor(TEAL);
@@ -259,7 +261,7 @@ public final class RangeSummaryRenderer {
         }
         paint.setTextAlign(Paint.Align.CENTER);
         text(canvas, paint, summary.progressText(), cx, cy + 11, 53, INK, true);
-        text(canvas, paint, "每日总完成度平均", cx, cy + 60, 27, MUTED, false);
+        text(canvas, paint, PROGRESS_CAPTION, cx, cy + CAPTION_BASELINE_OFFSET, CAPTION_SIZE, MUTED, false);
         paint.setTextAlign(Paint.Align.LEFT);
         paint.setColor(LINE); canvas.drawRect(457, 300, 459, 526, paint);
         text(canvas, paint, "累计投资注意力时长", 500, 350, 32, MUTED, false);

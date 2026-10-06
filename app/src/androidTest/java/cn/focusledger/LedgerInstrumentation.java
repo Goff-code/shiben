@@ -26,6 +26,7 @@ public final class LedgerInstrumentation extends Instrumentation {
         if("hidden_preview".equals(suite)){GalleryInstrumentationChecks.runHiddenPreview(context,name->check(true,name));result.putString("stream",log+"\nOK ("+passed+" checks)\n");result.putInt("checks",passed);finish(Activity.RESULT_OK,result);return;}
         if("gallery".equals(suite)){GalleryInstrumentationChecks.run(context,name->check(true,name));RangeSummaryInstrumentationChecks.run(context,name->check(true,name));result.putString("stream",log+"\nOK ("+passed+" checks)\n");result.putInt("checks",passed);finish(Activity.RESULT_OK,result);return;}
         if("gallery_ui".equals(suite)){runGalleryUi();result.putString("stream",log+"\nOK ("+passed+" checks)\n");result.putInt("checks",passed);finish(Activity.RESULT_OK,result);return;}
+        if("gallery_view".equals(suite)){runGalleryView();result.putString("stream",log+"\nOK ("+passed+" checks)\n");result.putInt("checks",passed);finish(Activity.RESULT_OK,result);return;}
         if("attention_history".equals(suite)){runAttentionHistoryUi();result.putString("stream",log+"\nOK ("+passed+" checks)\n");result.putInt("checks",passed);finish(Activity.RESULT_OK,result);return;}
         if("attention_store".equals(suite)){DailyArchive.get(context);AttentionV202Instrumentation.run(context,name->check(true,name));result.putString("stream",log+"\nOK ("+passed+" checks)\n");result.putInt("checks",passed);finish(Activity.RESULT_OK,result);return;}
         if("attention".equals(suite)||"attention_layout".equals(suite)){
@@ -182,19 +183,50 @@ public final class LedgerInstrumentation extends Instrumentation {
         StoreV2Instrumentation.run(context,name->check(true,name));
         result.putString("stream",log+"\nOK ("+passed+" checks)\n");result.putInt("checks",passed);finish(Activity.RESULT_OK,result);
     }catch(Throwable error){result.putString("stream",log+"FAIL "+error+"\n"+android.util.Log.getStackTraceString(error));try{screenshot("99-failure");}catch(Throwable ignored){}finish(Activity.RESULT_CANCELED,result);}}
-    private void runGalleryUi()throws Exception {
+    private void prepareHiddenGalleryPreview(boolean verifyPrivacy)throws Exception {
         check(Build.VERSION.SDK_INT>=29,"gallery UI fixture runs on Android10 or newer");
         timer=TimerCoordinator.get(context);store=timer.store();
         check(store.getRecordedDays().contains(LocalDate.now()),"gallery UI uses an existing disposable current-day fixture without changing ledger data");
         screen=startActivitySync(new Intent(context,MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));idle();
-        tab("今日");desc("更多");desc("导出记录");click("○ PNG 图片");click("预览导出");waitFor("保存到相册",60000);
-        check(has("PNG 预览"),"real PNG preview exposes 保存到相册");
-        String sourceId=field("exportJobId",String.class);ExportWorker worker=ExportWorker.get(context);
-        ExportWorker.Job source=worker.getJob(sourceId);
-        check(source!=null&&source.state==ExportWorker.State.SUCCEEDED&&source.result!=null,"real preview has a completed PNG export job");
-        screenshot("60-gallery-preview");
-        String[] saveIds=new String[2];java.util.List<android.net.Uri> created=new ArrayList<>();
+        tab("今日");desc("更多");desc("导出记录");click("○ PNG 图片");
+        final boolean[] initiallyChecked={false};runOnMainSync(()->{Switch control=findType(Switch.class);if(control==null)throw new AssertionError("Missing task privacy switch");initiallyChecked[0]=control.isChecked();});
+        android.content.SharedPreferences preferences=context.getSharedPreferences("shiben-v2-ui",Context.MODE_PRIVATE);
+        check(initiallyChecked[0]==preferences.getBoolean("png-hide-task-details",false),"PNG privacy switch follows saved preference and defaults off");
+        if(!initiallyChecked[0])click("隐藏所有任务细节");
+        if(verifyPrivacy){
+            recreate();runOnMainSync(()->check(findType(Switch.class)!=null&&findType(Switch.class).isChecked(),"enabled task privacy survives Activity recreation"));
+            click("○ Markdown");check(!has("隐藏所有任务细节"),"Markdown format does not expose the PNG-only privacy switch");
+            click("预览导出");waitFor("保存文件",60000);
+            ExportWorker.Job markdown=ExportWorker.get(context).getJob(field("exportJobId",String.class));
+            check(markdown!=null&&markdown.result!=null&&"text/markdown".equals(markdown.result.mimeType)
+                    &&markdown.result.markdownPreview!=null&&markdown.result.images.isEmpty()&&!has("保存到相册"),
+                    "PNG privacy selection leaves the real Markdown preview and file-save workflow unchanged");
+            for(LedgerStore.DayTask task:store.getDaySnapshot(LocalDate.now()).items)
+                check(markdown.result.markdownPreview.contains(V2Reports.markdownText(task.title)),"Markdown still retains full task details while PNG privacy is enabled");
+            back();click("○ PNG 图片");runOnMainSync(()->check(findType(Switch.class)!=null&&findType(Switch.class).isChecked(),"switching back from Markdown remembers enabled PNG privacy"));
+        }
+        click("预览导出");waitFor("保存到相册",60000);
+        check(has("PNG 预览"),"real hidden PNG preview exposes 保存到相册");
+        ExportWorker.Job source=ExportWorker.get(context).getJob(field("exportJobId",String.class));
+        check(source!=null&&source.state==ExportWorker.State.SUCCEEDED&&source.result!=null&&source.result.images.size()==1&&source.result.pageCount==1,
+                "real hidden preview produces exactly one completed PNG image");
+        android.graphics.BitmapFactory.Options bounds=new android.graphics.BitmapFactory.Options();bounds.inJustDecodeBounds=true;
+        android.graphics.BitmapFactory.decodeFile(source.result.file.getAbsolutePath(),bounds);
+        check(bounds.outWidth==1080&&bounds.outHeight==710,"real privacy UI sends the hidden option through to the compact 1080x710 PNG");
+    }
+    private void restoreGalleryPrivacy(android.content.SharedPreferences preferences,boolean existed,boolean value){
+        android.content.SharedPreferences.Editor edit=preferences.edit();
+        if(existed)edit.putBoolean("png-hide-task-details",value);else edit.remove("png-hide-task-details");
+        check(edit.commit(),"gallery UI restores the prior PNG privacy preference");
+    }
+    private void runGalleryUi()throws Exception {
+        android.content.SharedPreferences preferences=context.getSharedPreferences("shiben-v2-ui",Context.MODE_PRIVATE);
+        boolean existed=preferences.contains("png-hide-task-details"),previous=preferences.getBoolean("png-hide-task-details",false);
+        ExportWorker worker=ExportWorker.get(context);String[] saveIds=new String[2];java.util.List<android.net.Uri> created=new ArrayList<>();
         try {
+            prepareHiddenGalleryPreview(true);
+            String sourceId=field("exportJobId",String.class);ExportWorker.Job source=worker.getJob(sourceId);
+            screenshot("60-gallery-preview");
             runOnMainSync(()->{View action=findText(rootViews(),"保存到相册");if(action==null)throw new AssertionError("Missing gallery button");
                 action.performClick();saveIds[0]=field("copyJobId",String.class);
                 action.performClick();saveIds[1]=field("copyJobId",String.class);});
@@ -220,8 +252,42 @@ public final class LedgerInstrumentation extends Instrumentation {
                     "recreation and duplicate save attempts leave the actual gallery row count unchanged");
             screenshot("62-gallery-restored-preview");
         } finally {
+            // Also clean this exact job if an unrelated UI assertion failed after a successful save.
+            ExportWorker.Job saved=saveIds[0]==null?null:worker.getJob(saveIds[0]);
+            if(saved!=null&&saved.result!=null)for(android.net.Uri uri:saved.result.savedImages)if(!created.contains(uri))created.add(uri);
             for(android.net.Uri uri:created)check(context.getContentResolver().delete(uri,null,null)==1,"remove only test-created gallery UI row");
+            restoreGalleryPrivacy(preferences,existed,previous);
         }
+    }
+    private void runGalleryView()throws Exception {
+        android.content.SharedPreferences preferences=context.getSharedPreferences("shiben-v2-ui",Context.MODE_PRIVATE);
+        boolean existed=preferences.contains("png-hide-task-details"),previous=preferences.getBoolean("png-hide-task-details",false);
+        try {
+            prepareHiddenGalleryPreview(false);click("保存到相册");waitFor("图片已保存",60000);
+            ExportWorker.Job saved=ExportWorker.get(context).getJob(field("copyJobId",String.class));
+            check(saved!=null&&saved.state==ExportWorker.State.SUCCEEDED&&saved.result!=null&&saved.result.savedImages.size()==1,
+                    "gallery opening fixture saves exactly one hidden PNG");
+            android.net.Uri uri=saved.result.savedImages.get(0);
+            GalleryInstrumentationChecks.verifyImage(context,uri,saved.result.images.get(0),name->check(true,name));
+            android.content.ContentValues label=new android.content.ContentValues();
+            label.put(android.provider.MediaStore.Images.Media.DISPLAY_NAME,"QA_时本_隐藏任务相册打开验证_"+saved.id.substring(0,8)+".png");
+            check(context.getContentResolver().update(uri,label,null,null)==1,"retained gallery opening image is explicitly marked QA");
+            File folder=new File(context.getFilesDir(),"qa-v203");if(!folder.mkdirs()&&!folder.isDirectory())throw new IOException("Cannot create QA folder");
+            java.nio.file.Files.write(new File(folder,"gallery-view-uri.txt").toPath(),uri.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            runOnMainSync(()->{List<View> roots=rootViews();for(int i=roots.size()-1;i>=0;i--){View button=roots.get(i).findViewById(android.R.id.button1);
+                if(button instanceof TextView&&button.isShown()&&"查看图片".contentEquals(((TextView)button).getText())){button.performClick();return;}}
+                throw new AssertionError("Missing success dialog's actual 查看图片 button");});
+            long end=SystemClock.elapsedRealtime()+45000;String foreground="";
+            while(SystemClock.elapsedRealtime()<end){android.view.accessibility.AccessibilityNodeInfo root=getUiAutomation().getRootInActiveWindow();
+                if(root!=null&&root.getPackageName()!=null)foreground=root.getPackageName().toString();
+                if(foreground.toLowerCase(java.util.Locale.ROOT).contains("gallery"))break;SystemClock.sleep(250);}
+            check(foreground.toLowerCase(java.util.Locale.ROOT).contains("gallery"),"real success-dialog button opens the external system Gallery; foreground="+foreground);
+            java.nio.file.Files.write(new File(folder,"gallery-view-package.txt").toPath(),foreground.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            SystemClock.sleep(1800);Bitmap capture=getUiAutomation().takeScreenshot();check(capture!=null,"external Gallery screenshot is available");
+            try(FileOutputStream out=new FileOutputStream(new File(folder,"gallery-view-open.png"))){check(capture.compress(Bitmap.CompressFormat.PNG,100,out),"external Gallery screenshot saved as qa-v203/gallery-view-open.png");}
+            finally{capture.recycle();}
+            check(GalleryInstrumentationChecks.countBatch(context,saved.id.substring(0,8))==1,"exactly one explicitly marked QA image remains for manual Gallery inspection");
+        } finally {restoreGalleryPrivacy(preferences,existed,previous);}
     }
     private void runAttentionHistoryUi()throws Exception {
         timer=TimerCoordinator.get(context);store=timer.store();LocalDate today=LocalDate.now(),past=today.minusDays(7);

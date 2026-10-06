@@ -65,6 +65,15 @@ public final class RangeSummaryInstrumentationChecks {
         check(paint.measureText(allDate) <= 868 && paint.measureText(customDate) <= 868,
                 "year 0001 through 9999 dates fit full PNG content width without truncation", report);
 
+        paint.setTextSize(RangeSummaryRenderer.CAPTION_SIZE);
+        Paint.FontMetrics captionMetrics = paint.getFontMetrics();
+        double innerRadius = RangeSummaryRenderer.PROGRESS_RADIUS - RangeSummaryRenderer.RING_STROKE_WIDTH / 2d;
+        double captionDy = Math.max(Math.abs(RangeSummaryRenderer.CAPTION_BASELINE_OFFSET + captionMetrics.ascent),
+                Math.abs(RangeSummaryRenderer.CAPTION_BASELINE_OFFSET + captionMetrics.descent));
+        double captionHalfChord = Math.sqrt(innerRadius * innerRadius - captionDy * captionDy);
+        check(captionDy < innerRadius && paint.measureText(RangeSummaryRenderer.PROGRESS_CAPTION) / 2d + 8 <= captionHalfChord,
+                "27px daily-average caption including font descent clears inner ring by at least 8px on both sides", report);
+
         Object extremePlan = plan(extreme, true);
         List<?> duration = (List<?>) field(extremePlan, "duration");
         paint.setTextSize(44); paint.setTypeface(Typeface.create("sans-serif", Typeface.BOLD));
