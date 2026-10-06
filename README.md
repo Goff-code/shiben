@@ -26,12 +26,16 @@ python3 tests/branding/check.py .
 python3 scripts/check-unsigned-apk.py app/build/outputs/apk/release/app-release-unsigned.apk
 ```
 
-云端隔离工具可使用 `scripts/build-cloud.sh`。当前验收见 `docs/TEST_REPORT_2.0.2.md`，运行器历史说明见 `docs/TEST_REPORT_V2.md`；较早版本报告不替代本次结果。设计参考见 `docs/design/v2`，实际截图另行交付。
+云端隔离工具可使用 `scripts/build-cloud.sh`。本次工具精确版本、环境恢复与正式升级操作见 [Android云端QA说明](docs/ANDROID_CLOUD_QA.md)。当前验收见 `docs/TEST_REPORT_2.0.2.md`，运行器历史说明见 `docs/TEST_REPORT_V2.md`；较早版本报告不替代本次结果。设计参考见 `docs/design/v2`，实际截图另行交付。
+
+2.0.2已完成双系统业务／布局验证、最终正式签名核验及API35正式code4至5无清数据覆盖升级。正式升级的UiAutomator整套驱动曾中断，最终通过真实界面输入、截图和严格数据比较验收：旧列／偏好／Markdown语义30项、暂停计时9项保留检查通过。各候选差异、环境异常及实机限制均记录在本次报告中。
 
 ## 安装与签名
 
 安装身份保持 `cn.goff.shiben`；2.0.2 / code5 / min26 / target35。release 默认未签名。
 
 既有 V2 正式密钥由用户 Mac 本机保管；云端没有收到私钥或密码。公开证书保存在 `docs/SHIBEN_V2_RELEASE_CERTIFICATE.pem`。2.0.2 的正式签名和同证书覆盖升级状态见 `docs/TEST_REPORT_2.0.2.md`，既有签名记录见 `docs/RELEASE_V2_VERIFICATION.md`。云端 debug 仅测试；2.0.2 及未来版本必须保持相同包名、V2 正式证书和更大的 versionCode。2.0.2 的非破坏迁移与每日文件格式变更见 `docs/UPGRADE_2.0.2.md`。详情见 `docs/INSTALL_AND_BACKUP.md`、`docs/SIGNING_KEY_RECOVERY.md`。不要上传私钥或密码。
+
+已验收的正式2.0.2 APK为4,470,615字节，SHA256为 `24ed77569d73918ea2bb7d759d7788950c0cf35e2056f62b10c02aa9f6c9f885`。v2/v3签名有效，证书与原正式2.0.1一致；最终未签名原件的28个载荷项目字节不变，仅新增3个签名项目。升级时使用正式包直接覆盖安装，不要卸载旧版或清除数据；用户真机仍需设备侧确认。
 
 计时使用单调时钟，暂停不计入；重启只保留已保存检查点。精确提醒权限、通知渠道与手机后台限制影响提醒。realme GT6 / UI7.0 须真机验证。

@@ -1,6 +1,6 @@
 # 时本 2.0.2 验证报告
 
-日期：2026-10-05。构建、主机检查、Android15业务回归、Android10最终候选业务回归及双系统最终界面专项已完成，下文明确记录各阶段候选差异。正式签名、正式2.0.1至2.0.2覆盖升级尚未完成，不能据此宣称正式包已可覆盖安装；API29真实SAF保存及OEM真机范围也分别保留限制。
+更新日期：2026-10-06。构建、主机检查、Android15业务回归、Android10最终候选业务回归及双系统最终界面专项已完成；最终正式签名核验及正式2.0.1/code4至2.0.2/code5的无清数据覆盖升级也已通过。正式升级的UiAutomator整套驱动未通过，最终验收由真实界面输入、截图、安装结果和严格数据比较完成，详见下文。API29真实SAF保存及OEM真机范围仍保留限制。
 
 ## 范围与安装身份
 
@@ -18,13 +18,15 @@
 | 较早Debug覆盖升级 | `889470f` | `api35/upgrade-*`；用于证明Debug同证书code4至5的保留机制 |
 | 完成批量只读快照优化的业务候选 | `93db7f1`；Debug SHA256 `26f637a0b15b705ddf7ee819d30d5ea840ac2fee0e9e18f0ef1df948745357ba` | `api35-final/`；注意力、完整功能、空历史、真实SAF及导出压力测试 |
 | 最终生产候选 | `bdbfafa8c4ec4344ae171ba1761f6ffea7017555` | `build-ui-final.log`、最终主机检查、`api35-layout/`、`api29-final/`、`api29-layout/` |
-| 后续测试驱动 | `60388bd` | 只增加正式code4至5升级QA驱动，不改变生产APK内容；驱动存在不代表正式升级已通过 |
+| 后续测试驱动 | `60388bd` | 只增加正式code4至5升级QA驱动，不改变生产APK内容；该UiAutomator驱动未整套通过，正式升级采用下述独立验收证据 |
+| 最终正式包 | 生产仍为 `bdbfafa`；正式APK SHA256 `24ed77569d73918ea2bb7d759d7788950c0cf35e2056f62b10c02aa9f6c9f885` | `official-clean/` 的签名、实际覆盖安装、before/after比较与截图；`official-upgrade/signed-payload-check.json` |
 
 最终候选相对 `93db7f1` 的生产差异仅为历史列表与详情的两处解释文字：将“旧版”描述改为“历史快照不完整／该日期未保存完整任务快照”，避免把补记形成的不完整历史误称为旧版记录。业务核心未再修改；两处文字及相关历史显示已在最终候选上实测。API35完整业务回归仍明确归属于上一行候选，不伪称在最终APK上重复执行。
 
 - 最终Debug APK SHA256：`76c1741a78f6232a007c7349d6c9ccb094e3c0a3337c36b26f8a7a173adb4615`。
 - 最终未签名Release APK SHA256：`6b9655082f80a50ae4d4e048be5da5b7f30b72b3aa3ded8bea2e79d1518c8c56`。
 - 未签名产物检查只证明包装内容，不证明正式签名、可安装性或覆盖升级兼容性。
+- 最终正式APK为4,470,615字节，SHA256 `24ed77569d73918ea2bb7d759d7788950c0cf35e2056f62b10c02aa9f6c9f885`；下文单独记录其正式签名与实际覆盖升级结果。
 
 ## 构建与独立检查
 
@@ -178,13 +180,35 @@ API29的系统DocumentsUI在上一轮曾出现根目录切换异常及创建0字
 - 最初seed已写入数据和baseline，但在截图前景断言阶段遭遇模拟器SystemUI ANR而失败。按Wait恢复，真实画面确认仍暂停后再捕获before，继续同一份数据升级。失败尝试保留在日志，不计入通过数，也不写成seed全程PASS。
 - 证据：`api35/upgrade-before/`、`upgrade-after/`、`upgrade-seed-code4.log`、`upgrade-verify-code5.log`、`upgrade-retention.log`、`upgrade-paused.log`、`upgrade-continued.log` 及恢复现场。
 
-## 正式签名与正式覆盖升级：尚未完成
+## 最终正式签名与正式code4至5覆盖升级
 
-- 最终未签名Release已完成包装检查；尚无最终正式签名APK，因此未声明v2/v3签名有效、正式APK哈希或正式安装成功。
-- 待使用用户Mac既有V2密钥签名后，独立核验签名、公钥指纹、安装身份及未签名／正式包内容一致性。
-- 待以原正式2.0.1/code4至最终正式2.0.2/code5实做覆盖升级，保留真实任务、历史、偏好和暂停计时，期间不可卸载或清数据。
-- 验收需逐值比较旧表旧列及记录字节，逐项比较设置，按逻辑字段比较暂停计时，并按批准的新格式检查每日Markdown的语义保留。已准备的官方升级驱动不算执行证据。
-- 此前2.0.1正式签名或2.0.0至2.0.1升级成功，不是本次2.0.2正式包通过证明。
+### 签名与产物一致性
+
+- 最终正式2.0.2 APK由用户Mac既有V2密钥签名。独立Release核验19项通过，覆盖正式身份、公开证书、Launcher、品牌字节码、Release／隐私标记及无测试／私钥载荷。
+- 原正式2.0.1与新正式2.0.2均通过 `apksigner verify`，v2/v3签名有效，均为同一个签名者。证书DER SHA256为 `af1c11b14290abcd0aa95dfa3284ce931a822751f2780293f0aab9c90cce59d5`，与既有V2公开证书一致。
+- 新正式APK为4,470,615字节，SHA256 `24ed77569d73918ea2bb7d759d7788950c0cf35e2056f62b10c02aa9f6c9f885`。此次实际升级使用的原正式2.0.1 APK SHA256为 `5b7d8776de75a625534b3b61a57688d57e938345dbd1f56a03f34021573eed4f`。
+- 最终未签名原件的28个ZIP项目与正式包逐字节相同；新增项目仅为 `META-INF/MANIFEST.MF`、`META-INF/SHIBEN-R.RSA`、`META-INF/SHIBEN-R.SF`。正式包签名与核验期间没有重编生产APK。
+- 证据：`official-clean/release-check.log`、`old-signature.log`、`new-signature.log`、两代badging日志及 `official-upgrade/signed-payload-check.json`。
+
+### 实际覆盖安装与数据保留
+
+- 在独立API35 AOSP模拟器安装原正式2.0.1/code4，经真实界面建立／补全A、B两项任务、A的35%进度、1条已结束专注记录、声音／振动关闭状态，以及B的暂停计时。真实输入和截图确认基线后捕获before，再仅用 `adb install -r` 覆盖为最终正式2.0.2/code5，安装返回 `Success`。
+- 正式code4至5之间未卸载、未清数据；before与after之间未重启。两份包状态分别为code4和code5，首次安装时间相同。未操作用户手机，也未修改正式APK或为其加入测试后门。
+- SQLite从schema 2至3；表清单未变，结构差异仅为批准的 `daily_snapshots.settlement_grade`，没有凭空生成手动等级。旧列／记录、偏好与Markdown语义比较共30项通过。
+- 非计时表的原有列逐值及记录字节相同：`android_metadata` 1行、`daily_snapshots` 1行、`daily_task_snapshots` 2行、`projects` 1行、`sessions` 1行、`task_checks` 0行、`tasks` 2行。该正式夹具不含删除墓碑，墓碑保留另有前述真实SQLite迁移专项证据，不在此扩充覆盖声明。
+- `timer_state` 结构保持；暂停计时另做9项逻辑比较全部通过：仍暂停，会话ID、任务标题／ID、计划时长、累计实际时长、原日期／时区、片段数及两段片段数据全部保留。运行检查点不要求整个序列化blob字节相同。
+- 所有既有偏好文件和键值按语义完全一致。持久每日Markdown的日期、原注意力时长、任务名称／进度、已知总完成度保留，并转换为批准的一个标题加四节；因格式变更而不要求旧MD文件哈希不变。技术字段仍在SQLite中。
+- 已查看真实升级前后截图：B均为“已暂停”、已专注10秒、剩余24:50；升级后任务A为35%、B为0%；今日加权完成度17.5%、等级E、注意力1分31秒（包含暂停计时已投入部分）。声音／振动开关前后均关闭。
+- 升级后的 `final-crash.log` 为空。证据：`official-clean/official-install-r.log`、`before/`、`after/`、`final-comparison.log`、`paused-comparison.log`、`paused-before.png`、`paused-after.png`、`tasks-after.png`、`today-after.png`、`settings-before.png`、`settings-after.png`。
+
+### 驱动中断与测试环境适配
+
+- 正式UiAutomator整套seed／verify流程没有PASS。早期尝试受系统看门狗、NetworkStack／SystemUI ANR、黑屏和层级dump中断影响；最终环境的自动seed也在创建任务途中中断。相应失败日志和截图完整保留，不计入通过数，不用失败脚本的退出状态代表后续独立验收结果。
+- 最终验收改用真实ADB界面输入及截图补全并确认基线，再连续执行覆盖安装、状态捕获与严格数据比较。其成功结论来自上述安装和保留证据，不来自“UiAutomator整套通过”的声明。
+- 最终独立AVD使用480×800、160dpi、单核、SwiftShader GLES，禁用Vulkan并关闭系统动画。中途工具会话中断后的恢复／重启发生在计时seed之前，没有发生在最终before/after升级对之间。先前AVD系统失败现场保留在 `official-upgrade/` 等目录。
+- 首次暂停计时主机比较在30项数据比较通过后遇到恢复环境的Java工具问题：缺少可直接使用的javac入口及 `--release` 所需的 `ct.sym`，日志报 `release version 17 not supported`。仅在证据目录增加适配辅助脚本，以 `java com.sun.tools.javac.Main -source 17 -target 17` 编译并运行原 `ComparePausedTimer`；随后9项比较通过，保留1条系统模块路径警告。没有修改比较逻辑、生产源码或重编APK；`final-comparison.log` 的前30项与单独 `paused-comparison.log` 的9项分别记录。
+
+以上证明本次最终正式包在该API35模拟器上可同证书覆盖升级并保留所设基线；不代替realme真机、OEM后台或其它文件提供方验收。
 
 ## 本轮修正与环境限制
 
@@ -195,10 +219,9 @@ API29的系统DocumentsUI在上一轮曾出现根目录切换异常及创建0字
 
 仍需设备侧确认：realme GT6／realme UI7、OEM长时后台限制、真实来电中断、真实设备的系统文件选择器与第三方云文件提供方。AOSP模拟器的后台到点和SAF结果不能代替这些实机行为。
 
-## 未完成验收清单
+## 仍需设备侧确认的范围
 
-- 最终正式签名与独立签名／内容核验。
-- 原正式code4至最终正式code5的无清数据覆盖升级及完整保留比较。
-- realme GT6／UI7设备侧安装、后台与系统交互确认。
+- realme GT6／UI7真机上的正式包覆盖安装、长时后台、真实来电与系统交互，待用户设备侧验证。
+- API29本轮真实SAF保存未运行；API35已验证结果不代表所有系统文件选择器或第三方云文件提供方。
 
-上述未完成项在取得实际证据前保持待验证；本报告不以较早Debug结果、静态检查或测试驱动存在替代正式验收。
+本报告中的正式签名与code4至5覆盖升级已取得本次实际证据；未完成的设备侧范围仍保持待验证，不以模拟器或较早版本结果替代。
