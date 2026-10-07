@@ -214,8 +214,8 @@ public final class ExportWorker {
             return new Result(image, "image/png", image, null, null, false, snapshots.size(), 1);
         }
         List<File> images = new ArrayList<>();
-        // Precomputed blur of the original Today leaves. Decode only once per export; no runtime blur.
-        Bitmap background = BitmapFactory.decodeResource(app.getResources(), R.drawable.export_today_blurred);
+        // Offline photo asset is bounded and decoded only once for the whole gallery.
+        Bitmap background = GraffitiPoster.decodeBackground(app.getResources(), job::checkCancelled);
         if (background == null) throw new IOException("无法读取导出背景");
         try {
             for (LedgerStore.DaySnapshot snapshot : snapshots) {
@@ -301,10 +301,10 @@ public final class ExportWorker {
     }
 
     // Fixed-size pages bound memory independently of task count and date range.
-    static final int PAGE_WIDTH = 1080, PAGE_MAX_HEIGHT = 1600;
-    private static final int BG = 0xffe7efea, INK = 0xff102644, TEAL = 0xff13bdbb,
-            MUTED = 0xff617a8b, LINE = 0xffe0e7e9;
-    private static final int TASK_TOP = 698, PAGE_BOTTOM = 92, CONTENT_BOTTOM = PAGE_MAX_HEIGHT - PAGE_BOTTOM;
+    static final int PAGE_WIDTH = 1080, PAGE_MAX_HEIGHT = 2560;
+    private static final int BG = 0xff0b1215, INK = 0xfff3f6f5, TEAL = 0xff00ded2,
+            MUTED = 0xffb3c4c5, LINE = 0xff334447;
+    private static final int TASK_TOP = 1532, PAGE_BOTTOM = 92, CONTENT_BOTTOM = PAGE_MAX_HEIGHT - PAGE_BOTTOM;
     private static final int TITLE_SIZE = 38, LINE_HEIGHT = 49, ROW_BASE = 66, MAX_LINES_PER_FRAGMENT = 8;
     private static final int TASK_TITLE_X = 198, TASK_TITLE_WIDTH = 710;
     private static final class Fragment {
@@ -355,53 +355,21 @@ public final class ExportWorker {
         }
         return lines;
     }
-    private static void renderPage(LedgerStore.DaySnapshot snapshot, Page page, int pageNumber,
+    private void renderPage(LedgerStore.DaySnapshot snapshot, Page page, int pageNumber,
                                    int pageCount, Bitmap background, File target, Job job) throws IOException {
         renderPage(snapshot, page, pageNumber, pageCount, background, target, job, false);
     }
-    private static void renderPage(LedgerStore.DaySnapshot snapshot, Page page, int pageNumber,
+    private void renderPage(LedgerStore.DaySnapshot snapshot, Page page, int pageNumber,
                                    int pageCount, Bitmap background, File target, Job job, boolean hideTaskDetails) throws IOException {
-        int height = hideTaskDetails ? 710 : Math.min(PAGE_MAX_HEIGHT, Math.max(990, page.height + PAGE_BOTTOM));
+        int height = hideTaskDetails ? GraffitiPoster.HEIGHT : Math.min(PAGE_MAX_HEIGHT, Math.max(1730, page.height + PAGE_BOTTOM));
         Bitmap bitmap = Bitmap.createBitmap(PAGE_WIDTH, height, Bitmap.Config.ARGB_8888);
         try {
             Canvas canvas = new Canvas(bitmap); canvas.drawColor(BG);
             Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG | Paint.FILTER_BITMAP_FLAG);
-            // Use the entire original-derived asset, without cropping any leaf or task content.
-            canvas.drawBitmap(background, null, new RectF(0, 0, PAGE_WIDTH, height), paint);
-            paint.setColor(0xf5ffffff);
-            canvas.drawRoundRect(new RectF(48, 48, PAGE_WIDTH - 48, height - 48), 38, 38, paint);
-            paint.setStyle(Paint.Style.STROKE); paint.setStrokeWidth(2); paint.setColor(0xccffffff);
-            canvas.drawRoundRect(new RectF(48, 48, PAGE_WIDTH - 48, height - 48), 38, 38, paint);
-            text(canvas, paint, "时本 · 今日记录", 104, 138, 49, INK, true);
-            text(canvas, paint, snapshot.day.getYear() + "年" + snapshot.day.getMonthValue() + "月"
-                    + snapshot.day.getDayOfMonth() + "日", 106, 192, 34, MUTED, false);
-            if (pageCount > 1) {
-                paint.setTextAlign(Paint.Align.RIGHT);
-                text(canvas, paint, pageNumber + " / " + pageCount, 974, 132, 27, MUTED, false);
-                paint.setTextAlign(Paint.Align.LEFT);
-            }
-
-            float cx = 270, cy = 368, radius = 125;
-            paint.setStyle(Paint.Style.STROKE); paint.setStrokeWidth(22); paint.setStrokeCap(Paint.Cap.ROUND); paint.setColor(0xffcfefec);
-            canvas.drawCircle(cx, cy, radius, paint);
-            if (Double.isFinite(snapshot.totalProgress) && snapshot.totalProgress > 0) {
-                paint.setColor(TEAL); canvas.drawArc(new RectF(cx - radius, cy - radius, cx + radius, cy + radius), -90,
-                        (float) (Math.min(100, snapshot.totalProgress) * 3.6), false, paint);
-            }
-            paint.setStyle(Paint.Style.FILL); paint.setTextAlign(Paint.Align.CENTER);
-            fittedText(canvas, paint, V2Reports.totalPercent(snapshot), cx, cy + 12, 70, 205, INK, true);
-            text(canvas, paint, "总完成度", cx, cy + 61, 30, MUTED, false);
-            paint.setTextAlign(Paint.Align.LEFT);
-            paint.setColor(LINE); canvas.drawRect(457, 260, 459, 486, paint);
-            text(canvas, paint, "今日投资注意力时长总计", 500, 323, 32, MUTED, false);
-            fittedText(canvas, paint, V2Reports.duration(snapshot.totalActualMs), 500, 400, 56, 468, INK, true);
-
-            paint.setColor(LINE); canvas.drawRect(102, 539, 978, 541, paint);
-            text(canvas, paint, "当日结算等级", 106, 602, 40, INK, true);
-            fittedText(canvas, paint, V2Reports.settlementGrade(snapshot), 490, 612, 69, 470, TEAL, true);
+            GraffitiPoster.drawDay(app, canvas, background, snapshot, job::checkCancelled);
             if (!hideTaskDetails) {
-            paint.setColor(LINE); canvas.drawRect(102, 638, 978, 640, paint);
-            text(canvas, paint, "当日任务与完成度", 106, 687, 40, INK, true);
+            paint.setColor(LINE); canvas.drawRect(102, 1458, 978, 1460, paint);
+            text(canvas, paint, "当日任务与完成度", 106, 1516, 40, INK, true);
 
             int y = TASK_TOP;
             if (page.rows.isEmpty()) text(canvas, paint, snapshot.completeSnapshot ? "无" : "未知", 106, y + 78, 36, MUTED, false);

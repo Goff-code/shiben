@@ -18,7 +18,7 @@ public final class RangeSummaryRendererBudgetTest {
     }
 
     @Test public void measuredHeightAcceptsExactLimitAndNeverSilentlyClamps() throws Exception {
-        assertEquals(1100, RangeSummaryRenderer.checkedHeight(100));
+        assertEquals(1730, RangeSummaryRenderer.checkedHeight(100));
         assertEquals(8000, RangeSummaryRenderer.checkedHeight(8000));
         try { RangeSummaryRenderer.checkedHeight(8001); fail("must not crop the final row"); }
         catch (IOException expected) {
@@ -55,11 +55,11 @@ public final class RangeSummaryRendererBudgetTest {
     }
 
     @Test public void hiddenTasksUseCompactHeightWithTheSameSafeAllocationPreflight() throws Exception {
-        assertEquals(740, RangeSummaryRenderer.HIDDEN_TASK_HEIGHT);
-        assertEquals(740, RangeSummaryRenderer.checkedHeight(740, true));
-        assertEquals(1100, RangeSummaryRenderer.checkedHeight(740, false));
-        long bytes = RangeSummaryRenderer.estimatedBitmapBytes(1080, 740, RangeSummaryRenderer.MAX_BACKGROUND_PIXELS);
-        assertEquals(13_682_560L, bytes);
+        assertEquals(1440, RangeSummaryRenderer.HIDDEN_TASK_HEIGHT);
+        assertEquals(1440, RangeSummaryRenderer.checkedHeight(1440, true));
+        assertEquals(1730, RangeSummaryRenderer.checkedHeight(1440, false));
+        long bytes = RangeSummaryRenderer.estimatedBitmapBytes(1080, 1440, RangeSummaryRenderer.MAX_BACKGROUND_PIXELS);
+        assertEquals(16_706_560L, bytes);
         assertTrue(bytes < RangeSummaryRenderer.BITMAP_BUDGET_BYTES);
     }
 }

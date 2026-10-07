@@ -22,7 +22,7 @@ import java.util.List;
 
 /** One legible PNG for one requested range. Oversized content fails before allocating an output bitmap. */
 public final class RangeSummaryRenderer {
-    public static final int WIDTH = 1080, MAX_HEIGHT = 8000, HIDDEN_TASK_HEIGHT = 740;
+    public static final int WIDTH = 1080, MAX_HEIGHT = 8000, HIDDEN_TASK_HEIGHT = GraffitiPoster.HEIGHT;
     public static final long MAX_OUTPUT_PIXELS = (long) WIDTH * MAX_HEIGHT;
     public static final long MAX_BACKGROUND_PIXELS = 512L * 1024;
     /** ARGB_8888 output + bounded background + encoder/sampled-preview reserve, below 48 MiB. */
@@ -30,13 +30,13 @@ public final class RangeSummaryRenderer {
     public static final long AUXILIARY_RESERVE_BYTES = 8L * 1024 * 1024;
     public static final String TOO_LARGE = "任务内容过长，无法在安全内存范围内生成单张清晰完整的图片；请缩小日期范围或改用 Markdown 导出。";
 
-    private static final int BG = 0xffe7efea, INK = 0xff102644, TEAL = 0xff13bdbb,
-            MUTED = 0xff617a8b, LINE = 0xffe0e7e9;
+    private static final int BG = 0xff0b1215, INK = 0xfff3f6f5, TEAL = 0xff00ded2,
+            MUTED = 0xffb3c4c5, LINE = 0xff334447;
     private static final int LEFT = 106, RIGHT = 974, TITLE_X = 198, TITLE_WIDTH = RIGHT - TITLE_X;
     private static final int TITLE_SIZE = 38, TITLE_LINE = 49, NOTE_SIZE = 29, NOTE_LINE = 39;
     private static final int META_SIZE = 27, META_LINE = 37, ROW_EXTRA = 65, BOTTOM = 82;
     static final String PROGRESS_CAPTION = "日均总完成度";
-    static final int CAPTION_SIZE = 27, CAPTION_BASELINE_OFFSET = 60, PROGRESS_RADIUS = 125, RING_STROKE_WIDTH = 22;
+    static final int CAPTION_SIZE = 31, CAPTION_BASELINE_OFFSET = 64, PROGRESS_RADIUS = 153, RING_STROKE_WIDTH = 24;
 
     private RangeSummaryRenderer() { }
 
@@ -61,7 +61,7 @@ public final class RangeSummaryRenderer {
     }
 
     public static int checkedHeight(long proposedHeight, boolean hideTaskDetails) throws IOException {
-        long height = Math.max(hideTaskDetails ? HIDDEN_TASK_HEIGHT : 1100, proposedHeight);
+        long height = Math.max(hideTaskDetails ? HIDDEN_TASK_HEIGHT : 1730, proposedHeight);
         validateBitmapBudget(WIDTH, height, MAX_BACKGROUND_PIXELS);
         return (int) height;
     }
@@ -81,11 +81,11 @@ public final class RangeSummaryRenderer {
         Bitmap background = null, output = null;
         boolean moved = false, success = false;
         try {
-            background = decodeBackground(context.getResources(), checkCancelled);
+            background = GraffitiPoster.decodeBackground(context.getResources(), checkCancelled);
             validateBitmapBudget(WIDTH, plan.height, (long) background.getWidth() * background.getHeight());
             RangeSummary.check(checkCancelled);
             output = Bitmap.createBitmap(WIDTH, plan.height, Bitmap.Config.ARGB_8888);
-            draw(new Canvas(output), background, summary, plan, checkCancelled);
+            draw(context, new Canvas(output), background, summary, plan, checkCancelled);
             RangeSummary.check(checkCancelled);
             try (FileOutputStream file = new FileOutputStream(temporary);
                  OutputStream out = new CancellationOutputStream(file, checkCancelled)) {
@@ -111,33 +111,6 @@ public final class RangeSummaryRenderer {
         }
     }
 
-    private static Bitmap decodeBackground(Resources resources, Runnable cancel) throws IOException {
-        RangeSummary.check(cancel);
-        BitmapFactory.Options options = new BitmapFactory.Options();
-        options.inJustDecodeBounds = true; options.inScaled = false;
-        BitmapFactory.decodeResource(resources, R.drawable.export_today_blurred, options);
-        if (options.outWidth <= 0 || options.outHeight <= 0) throw new IOException("无法读取导出背景");
-        int sample = 1;
-        while (sampledPixels(options.outWidth, options.outHeight, sample) > MAX_BACKGROUND_PIXELS) {
-            RangeSummary.check(cancel);
-            if (sample > (1 << 29)) throw new IOException(TOO_LARGE);
-            sample *= 2;
-        }
-        options.inJustDecodeBounds = false; options.inSampleSize = sample;
-        options.inPreferredConfig = Bitmap.Config.ARGB_8888;
-        RangeSummary.check(cancel);
-        Bitmap background = BitmapFactory.decodeResource(resources, R.drawable.export_today_blurred, options);
-        if (background == null) throw new IOException("无法读取导出背景");
-        if (background.getAllocationByteCount() > MAX_BACKGROUND_PIXELS * 4L) {
-            background.recycle(); throw new IOException(TOO_LARGE);
-        }
-        return background;
-    }
-
-    private static long sampledPixels(int width, int height, int sample) {
-        return ((width + (long) sample - 1) / sample) * ((height + (long) sample - 1) / sample);
-    }
-
     private static final class Row {
         RangeSummary.MergedTask task;
         List<String> titles, details;
@@ -146,7 +119,7 @@ public final class RangeSummaryRenderer {
 
     private static final class Plan {
         final List<Row> rows = new ArrayList<>();
-        List<String> notes, taskNotes, duration;
+        List<String> notes, taskNotes;
         int height, taskHeadingY, taskNotesY, taskTop;
         boolean hideTaskDetails;
     }
@@ -154,8 +127,6 @@ public final class RangeSummaryRenderer {
     private static Plan plan(RangeSummary summary, Runnable cancel, boolean hideTaskDetails) throws IOException {
         Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
         Plan plan = new Plan();
-        setFont(paint, 44, true);
-        plan.duration = wrap(summary.actualText(), paint, 468, 3, cancel);
         plan.hideTaskDetails = hideTaskDetails;
         if (hideTaskDetails) {
             // Crucially, no iteration over task names or task rows, even for oversized inventories.
@@ -170,7 +141,7 @@ public final class RangeSummaryRenderer {
                 + summary.recordedDayCount + " 天中 " + summary.knownProgressDayCount + " 天进度已知；未知日不会当作 0% 或跳过，均值与等级显示未知。";
         if (summary.knownActualDayCount < summary.recordedDayCount) notes += "\n部分留存日注意力时长未知，累计值显示未知。";
         plan.notes = wrap(notes, paint, RIGHT - LEFT, MAX_HEIGHT / NOTE_LINE, cancel);
-        plan.taskHeadingY = 704 + plan.notes.size() * NOTE_LINE + 61;
+        plan.taskHeadingY = 1504 + plan.notes.size() * NOTE_LINE + 61;
         plan.taskNotesY = plan.taskHeadingY + 49;
         setFont(paint, META_SIZE, false);
         String taskNotes = "按任务标识合并，名称取最后一次留存；同名不同任务分别保留。\n"
@@ -238,44 +209,15 @@ public final class RangeSummaryRenderer {
         lines.add(line);
     }
 
-    private static void draw(Canvas canvas, Bitmap background, RangeSummary summary, Plan plan, Runnable cancel) {
+    private static void draw(Context context, Canvas canvas, Bitmap background, RangeSummary summary, Plan plan, Runnable cancel) {
         RangeSummary.check(cancel);
         Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG | Paint.FILTER_BITMAP_FLAG);
         canvas.drawColor(BG);
-        canvas.drawBitmap(background, null, new RectF(0, 0, WIDTH, plan.height), paint);
-        paint.setColor(0xf5ffffff);
-        canvas.drawRoundRect(new RectF(48, 48, WIDTH - 48, plan.height - 48), 38, 38, paint);
-        text(canvas, paint, "时本 · 区间汇总", LEFT - 2, 138, 49, INK, true);
-        text(canvas, paint, summary.range.isAll() ? "全部记录 · " + summary.recordedSpanText() : summary.range.label(),
-                LEFT, 194, 32, MUTED, false);
-        text(canvas, paint, "共 " + summary.recordedDayCount + " 个留存日 · 进度未知 "
-                + (summary.recordedDayCount - summary.knownProgressDayCount) + " 天", LEFT, 242, 29, MUTED, false);
-
-        float cx = 270, cy = 413, radius = PROGRESS_RADIUS;
-        paint.setStyle(Paint.Style.STROKE); paint.setStrokeWidth(RING_STROKE_WIDTH); paint.setStrokeCap(Paint.Cap.ROUND);
-        paint.setColor(0xffcfefec); canvas.drawCircle(cx, cy, radius, paint);
-        if (Double.isFinite(summary.meanDailyProgress) && summary.meanDailyProgress > 0) {
-            paint.setColor(TEAL);
-            canvas.drawArc(new RectF(cx - radius, cy - radius, cx + radius, cy + radius), -90,
-                    (float) (Math.min(100, summary.meanDailyProgress) * 3.6), false, paint);
-        }
-        paint.setTextAlign(Paint.Align.CENTER);
-        text(canvas, paint, summary.progressText(), cx, cy + 11, 53, INK, true);
-        text(canvas, paint, PROGRESS_CAPTION, cx, cy + CAPTION_BASELINE_OFFSET, CAPTION_SIZE, MUTED, false);
-        paint.setTextAlign(Paint.Align.LEFT);
-        paint.setColor(LINE); canvas.drawRect(457, 300, 459, 526, paint);
-        text(canvas, paint, "累计投资注意力时长", 500, 350, 32, MUTED, false);
-        for (int i = 0; i < plan.duration.size(); i++) {
-            RangeSummary.check(cancel);
-            text(canvas, paint, plan.duration.get(i), 500, 419 + i * 54, 44, INK, true);
-        }
-        divider(canvas, paint, 581);
-        text(canvas, paint, "区间结算等级", LEFT, 644, 40, INK, true);
-        text(canvas, paint, summary.settlementGrade, 520, 654, 65, TEAL, true);
+        GraffitiPoster.drawRange(context, canvas, background, summary, cancel);
         if (plan.hideTaskDetails) return;
         for (int i = 0; i < plan.notes.size(); i++) {
             RangeSummary.check(cancel);
-            text(canvas, paint, plan.notes.get(i), LEFT, 704 + i * NOTE_LINE, NOTE_SIZE, MUTED, false);
+            text(canvas, paint, plan.notes.get(i), LEFT, 1504 + i * NOTE_LINE, NOTE_SIZE, MUTED, false);
         }
         divider(canvas, paint, plan.taskHeadingY - 49);
         text(canvas, paint, "任务汇总与平均完成度", LEFT, plan.taskHeadingY, 40, INK, true);

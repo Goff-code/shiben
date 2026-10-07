@@ -72,23 +72,18 @@ public final class RangeSummaryInstrumentationChecks {
                 Math.abs(RangeSummaryRenderer.CAPTION_BASELINE_OFFSET + captionMetrics.descent));
         double captionHalfChord = Math.sqrt(innerRadius * innerRadius - captionDy * captionDy);
         check(captionDy < innerRadius && paint.measureText(RangeSummaryRenderer.PROGRESS_CAPTION) / 2d + 8 <= captionHalfChord,
-                "27px daily-average caption including font descent clears inner ring by at least 8px on both sides", report);
+                "31px daily-average caption including font descent clears inner ring by at least 8px on both sides", report);
 
-        Object extremePlan = plan(extreme, true);
-        List<?> duration = (List<?>) field(extremePlan, "duration");
-        paint.setTextSize(44); paint.setTypeface(Typeface.create("sans-serif", Typeface.BOLD));
-        for (Object line : duration) check(paint.measureText((String) line) <= 468,
-                "Long.MAX_VALUE attention duration line fits fixed readable 44px text", report);
-        check(duration.size() <= 3 && 419 + (duration.size() - 1) * 54 + paint.getFontMetrics().descent < 581,
-                "maximum cumulative duration stays above grade divider", report);
-        paint.setTextSize(65);
-        check(654 + paint.getFontMetrics().descent < RangeSummaryRenderer.HIDDEN_TASK_HEIGHT - 48,
-                "hidden summary grade stays inside near-white panel", report);
+        Typeface posterFace = context.getResources().getFont(R.font.ma_shan_zheng);
+        float actualDurationSize = GraffitiPoster.fittedSize(paint, extreme.actualText(), 67, 817, posterFace);
+        paint.setTypeface(posterFace); paint.setTextSize(actualDurationSize);
+        check(actualDurationSize >= 28 && paint.measureText(extreme.actualText()) <= 817.5f,
+                "production poster font fits complete Long.MAX_VALUE duration in its actual wide-card area", report);
         File boundary = new File(directory, "range-hidden-boundary.png");
         RangeSummaryRenderer.render(context, extreme, boundary, null, true);
         BitmapFactory.Options boundaryBounds = bounds(boundary);
-        check(boundaryBounds.outWidth == 1080 && boundaryBounds.outHeight == 740 && "image/png".equals(boundaryBounds.outMimeType),
-                "extreme dates and duration render one actual 1080x740 hidden PNG", report);
+        check(boundaryBounds.outWidth == 1080 && boundaryBounds.outHeight == 1440 && "image/png".equals(boundaryBounds.outMimeType),
+                "extreme dates and duration render one actual 1080x1440 hidden PNG", report);
 
         String secret = "保密名称开始" + String.join("", Collections.nCopies(3000, "完整保密内容🧠")) + "保密名称结束";
         List<LedgerStore.DayTask> hugeRows = new ArrayList<>();
@@ -100,7 +95,7 @@ public final class RangeSummaryInstrumentationChecks {
                 new LedgerStore.DaySnapshot(day, Collections.singletonList(task("different-id", "完全不同的任务", 20, 17)),
                         65, true, 8_100_000)));
         Object hiddenPlan = plan(huge, true);
-        check(((List<?>) field(hiddenPlan, "rows")).isEmpty() && (int) field(hiddenPlan, "height") == 740
+        check(((List<?>) field(hiddenPlan, "rows")).isEmpty() && (int) field(hiddenPlan, "height") == 1440
                         && field(hiddenPlan, "taskNotes") == null && field(hiddenPlan, "notes") == null,
                 "hidden range layout never wraps or lays out 5000 private tasks or their long names", report);
         File hidden = new File(directory, "range-hidden-preview.png"), compared = new File(directory, "range-hidden-compared.png");
@@ -108,7 +103,7 @@ public final class RangeSummaryInstrumentationChecks {
         RangeSummaryRenderer.render(context, changed, compared, null, true);
         check(Arrays.equals(Files.readAllBytes(hidden.toPath()), Files.readAllBytes(compared.toPath())),
                 "hidden range PNG bytes ignore every task name, id, count, progress and per-task duration", report);
-        check(bounds(hidden).outHeight == 740, "hidden oversized inventory still exports one compact readable PNG", report);
+        check(bounds(hidden).outHeight == 1440, "hidden oversized inventory still exports one compact readable PNG", report);
         Files.deleteIfExists(compared.toPath());
 
         File oversized = new File(directory, "range-oversized-must-not-exist.png");
@@ -138,10 +133,10 @@ public final class RangeSummaryInstrumentationChecks {
                 "real four-task summary PNG generated for visual review: qa-v203/range-summary-preview.png", report);
         Bitmap decoded = BitmapFactory.decodeFile(preview.getAbsolutePath());
         try {
-            int panel = decoded.getPixel(80, 250), backdrop = decoded.getPixel(10, 10);
-            check(panel != backdrop && android.graphics.Color.red(panel) > 230 && android.graphics.Color.green(panel) > 230
-                            && android.graphics.Color.blue(panel) > 230,
-                    "range PNG preserves approved leaf backdrop and near-white panel", report);
+            int panel = decoded.getPixel(80, 1490), backdrop = decoded.getPixel(10, 10);
+            check(panel != backdrop && android.graphics.Color.red(panel) < 40
+                            && android.graphics.Color.green(panel) < 50,
+                    "range PNG keeps photo header and dark legible appendix", report);
         } finally { decoded.recycle(); }
 
         AtomicInteger calls = new AtomicInteger();

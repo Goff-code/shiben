@@ -54,9 +54,9 @@ public final class ExportInstrumentationChecks {
         java.lang.reflect.Method render=ExportWorker.class.getDeclaredMethod("renderPage",LedgerStore.DaySnapshot.class,
                 pages.get(0).getClass(),int.class,int.class,android.graphics.Bitmap.class,File.class,ExportWorker.Job.class);
         render.setAccessible(true);
-        android.graphics.Bitmap background=BitmapFactory.decodeResource(context.getResources(),R.drawable.export_today_blurred);
+        android.graphics.Bitmap background=GraffitiPoster.decodeBackground(context.getResources(), null);
         File image=new File(context.getFilesDir(),"qa-export-preview-2026-10-05.png");
-        try { render.invoke(null,sample,pages.get(0),1,1,background,image,job); }
+        try { render.invoke(ExportWorker.get(context),sample,pages.get(0),1,1,background,image,job); }
         finally { background.recycle(); }
         DailyArchive.writeAtomicUtf8(new File(context.getFilesDir(),"qa-export-preview-2026-10-05.md"),
                 V2Reports.dailyMarkdown(sample).getBytes(StandardCharsets.UTF_8));
@@ -128,10 +128,9 @@ public final class ExportInstrumentationChecks {
         check(png.result.previewImage!=null&&png.result.previewImage.isFile(),"PNG preview is first real output page",report);
         android.graphics.Bitmap preview=BitmapFactory.decodeFile(png.result.previewImage.getAbsolutePath());
         try {
-            int border=preview.getPixel(10,10), panel=preview.getPixel(80,250);
-            check(border!=panel,"PNG uses leaves backdrop and distinct legible panel",report);
-            check(android.graphics.Color.red(panel)>230&&android.graphics.Color.green(panel)>230
-                    &&android.graphics.Color.blue(panel)>230,"PNG content panel is near white",report);
+            int appendix=preview.getPixel(80,1500);
+            check(android.graphics.Color.red(appendix)<40 && android.graphics.Color.green(appendix)<50,
+                    "PNG uses dark graffiti appendix with live legible task rows",report);
         } finally { preview.recycle(); }
 
         // Re-observation is the same contract used by an Activity after rotation.

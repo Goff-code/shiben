@@ -23,6 +23,7 @@ public final class LedgerInstrumentation extends Instrumentation {
     @Override public void callActivityOnResume(Activity a){super.callActivityOnResume(a);screen=a;}
     @Override public void onStart(){Bundle result=new Bundle();try{
         context=getTargetContext();
+        if("graffiti".equals(suite)){GraffitiInstrumentationChecks.run(context,name->check(true,name));result.putString("stream",log+"\nOK ("+passed+" checks)\n");result.putInt("checks",passed);finish(Activity.RESULT_OK,result);return;}
         if("hidden_preview".equals(suite)){GalleryInstrumentationChecks.runHiddenPreview(context,name->check(true,name));result.putString("stream",log+"\nOK ("+passed+" checks)\n");result.putInt("checks",passed);finish(Activity.RESULT_OK,result);return;}
         if("gallery".equals(suite)){GalleryInstrumentationChecks.run(context,name->check(true,name));RangeSummaryInstrumentationChecks.run(context,name->check(true,name));result.putString("stream",log+"\nOK ("+passed+" checks)\n");result.putInt("checks",passed);finish(Activity.RESULT_OK,result);return;}
         if("gallery_ui".equals(suite)){runGalleryUi();result.putString("stream",log+"\nOK ("+passed+" checks)\n");result.putInt("checks",passed);finish(Activity.RESULT_OK,result);return;}
@@ -212,7 +213,7 @@ public final class LedgerInstrumentation extends Instrumentation {
                 "real hidden preview produces exactly one completed PNG image");
         android.graphics.BitmapFactory.Options bounds=new android.graphics.BitmapFactory.Options();bounds.inJustDecodeBounds=true;
         android.graphics.BitmapFactory.decodeFile(source.result.file.getAbsolutePath(),bounds);
-        check(bounds.outWidth==1080&&bounds.outHeight==710,"real privacy UI sends the hidden option through to the compact 1080x710 PNG");
+        check(bounds.outWidth==1080&&bounds.outHeight==1440,"real privacy UI sends the hidden option through to the compact 1080x1440 PNG");
     }
     private void restoreGalleryPrivacy(android.content.SharedPreferences preferences,boolean existed,boolean value){
         android.content.SharedPreferences.Editor edit=preferences.edit();
@@ -283,11 +284,31 @@ public final class LedgerInstrumentation extends Instrumentation {
                 if(foreground.toLowerCase(java.util.Locale.ROOT).contains("gallery"))break;SystemClock.sleep(250);}
             check(foreground.toLowerCase(java.util.Locale.ROOT).contains("gallery"),"real success-dialog button opens the external system Gallery; foreground="+foreground);
             java.nio.file.Files.write(new File(folder,"gallery-view-package.txt").toPath(),foreground.getBytes(java.nio.charset.StandardCharsets.UTF_8));
-            SystemClock.sleep(1800);Bitmap capture=getUiAutomation().takeScreenshot();check(capture!=null,"external Gallery screenshot is available");
-            try(FileOutputStream out=new FileOutputStream(new File(folder,"gallery-view-open.png"))){check(capture.compress(Bitmap.CompressFormat.PNG,100,out),"external Gallery screenshot saved as qa-v203/gallery-view-open.png");}
+            Bitmap blank=Bitmap.createBitmap(480,800,Bitmap.Config.ARGB_8888);blank.eraseColor(0xff1b1b1b);
+            try{check(!galleryPosterVisible(blank),"Gallery loading canvas is not mistaken for rendered poster pixels");}finally{blank.recycle();}
+            // Gallery can take ~10s on a cold no-KVM emulator. Wait for actual poster pixels, not merely its Activity.
+            long imageDeadline=SystemClock.elapsedRealtime()+60000;Bitmap capture=null;
+            while(SystemClock.elapsedRealtime()<imageDeadline){
+                if(capture!=null)capture.recycle();capture=getUiAutomation().takeScreenshot();
+                if(capture!=null&&galleryPosterVisible(capture))break;SystemClock.sleep(500);
+            }
+            check(capture!=null,"external Gallery screenshot is available");
+            try(FileOutputStream out=new FileOutputStream(new File(folder,"gallery-view-open.png"))){
+                check(galleryPosterVisible(capture),"external Gallery viewport displays cyan poster pixels, not a blank loading canvas");
+                check(capture.compress(Bitmap.CompressFormat.PNG,100,out),"external Gallery screenshot saved as qa-v203/gallery-view-open.png");}
             finally{capture.recycle();}
             check(GalleryInstrumentationChecks.countBatch(context,saved.id.substring(0,8))==1,"exactly one explicitly marked QA image remains for manual Gallery inspection");
         } finally {restoreGalleryPrivacy(preferences,existed,previous);}
+    }
+    private static boolean galleryPosterVisible(Bitmap image) {
+        int hits=0,step=Math.max(4,image.getWidth()/100);
+        // Exclude the status bar, Gallery toolbar/icon and navigation bar.
+        for(int y=(int)(image.getHeight()*.15);y<image.getHeight()*.9;y+=step)
+            for(int x=(int)(image.getWidth()*.06);x<image.getWidth()*.94;x+=step){
+                int color=image.getPixel(x,y),r=android.graphics.Color.red(color),g=android.graphics.Color.green(color),b=android.graphics.Color.blue(color);
+                if(g>115&&b>100&&r<80&&g-r>60&&b-r>40&&++hits>=48)return true;
+            }
+        return false;
     }
     private void runAttentionHistoryUi()throws Exception {
         timer=TimerCoordinator.get(context);store=timer.store();LocalDate today=LocalDate.now(),past=today.minusDays(7);

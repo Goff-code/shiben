@@ -181,9 +181,9 @@ public final class GalleryInstrumentationChecks {
         Method renderer = ExportWorker.class.getDeclaredMethod("renderPage", LedgerStore.DaySnapshot.class,
                 pageClass, int.class, int.class, Bitmap.class, File.class, ExportWorker.Job.class, boolean.class);
         renderer.setAccessible(true);
-        Bitmap background = BitmapFactory.decodeResource(context.getResources(), R.drawable.export_today_blurred);
+        Bitmap background = GraffitiPoster.decodeBackground(context.getResources(), null);
         if (background == null) throw new AssertionError("Missing real PNG background");
-        try { renderer.invoke(null, snapshot, emptyPage, 1, 1, background, output, job, true); }
+        try { renderer.invoke(ExportWorker.get(context), snapshot, emptyPage, 1, 1, background, output, job, true); }
         catch (InvocationTargetException error) { throw new AssertionError("Real hidden PNG renderer failed", error.getCause()); }
         finally { background.recycle(); }
     }
@@ -207,8 +207,8 @@ public final class GalleryInstrumentationChecks {
                     "hidden PNG bytes are identical after all private task names, identifiers and per-task values change", report);
             BitmapFactory.Options bounds = new BitmapFactory.Options(); bounds.inJustDecodeBounds = true;
             BitmapFactory.decodeFile(preview.getAbsolutePath(), bounds);
-            check(bounds.outWidth == 1080 && bounds.outHeight == 710 && "image/png".equals(bounds.outMimeType),
-                    "hidden daily preview is a readable compact 1080x710 PNG", report);
+            check(bounds.outWidth == 1080 && bounds.outHeight == 1440 && "image/png".equals(bounds.outMimeType),
+                    "hidden daily preview is a readable compact 1080x1440 PNG", report);
         } finally { if (comparison.exists() && !comparison.delete()) throw new IOException("Could not clean comparison fixture"); }
     }
     private static LedgerStore.DaySnapshot privacySnapshot(LocalDate day, int count, boolean changed) {
@@ -243,7 +243,7 @@ public final class GalleryInstrumentationChecks {
                     "hidden " + labels[i] + " pixels and PNG metadata cannot reveal changed names, task counts or per-task values", report);
             BitmapFactory.Options bounds = new BitmapFactory.Options(); bounds.inJustDecodeBounds = true;
             BitmapFactory.decodeFile(image.file.getAbsolutePath(), bounds);
-            check(bounds.outWidth == 1080 && bounds.outHeight == (daily ? 710 : RangeSummaryRenderer.HIDDEN_TASK_HEIGHT),
+            check(bounds.outWidth == 1080 && bounds.outHeight == (daily ? 1440 : RangeSummaryRenderer.HIDDEN_TASK_HEIGHT),
                     "hidden " + labels[i] + " image remains compact without blank private-detail space", report);
             check(!image.fileName.contains("ALPHA926") && !image.fileName.contains("OMEGA173") && image.fileName.endsWith(".png")
                             && image.fileName.equals(comparison.fileName),
