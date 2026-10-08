@@ -6,7 +6,6 @@ import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.graphics.Canvas;
 import android.graphics.LinearGradient;
-import android.graphics.Matrix;
 import android.graphics.Paint;
 import android.graphics.Path;
 import android.graphics.RectF;
@@ -19,7 +18,7 @@ import java.time.format.DateTimeFormatter;
 import java.util.Locale;
 import java.util.Random;
 
-/** Reusable offline 3:4 poster. Background contains no text or metrics; every mark below is live. */
+/** Reusable offline 3:4 poster. Text-free background; original lettering is selected offline, metrics are always live. */
 public final class GraffitiPoster {
     public static final int WIDTH = 1080, HEIGHT = 1440;
     public static final int INK = 0xff0b1215, WHITE = 0xfff7f8f4, CYAN = 0xff00ece2;
@@ -57,7 +56,7 @@ public final class GraffitiPoster {
     }
 
     public static void drawDay(Context context, Canvas canvas, Bitmap background,
-                               LedgerStore.DaySnapshot snapshot, Runnable cancel) {
+                               LedgerStore.DaySnapshot snapshot, Runnable cancel) throws IOException {
         LocalDate day = snapshot.day;
         String date = day.format(DateTimeFormatter.ofPattern("uuuu.M.d", Locale.ROOT))
                 + "  " + WEEKDAYS[day.getDayOfWeek().getValue() - 1];
@@ -68,7 +67,7 @@ public final class GraffitiPoster {
     }
 
     public static void drawRange(Context context, Canvas canvas, Bitmap background,
-                                 RangeSummary summary, Runnable cancel) {
+                                 RangeSummary summary, Runnable cancel) throws IOException {
         String date = summary.range.isAll() ? "全部记录 · " + summary.recordedSpanText() : summary.range.label();
         draw(context, canvas, background, "区间记录", date, summary.meanDailyProgress,
                 summary.progressText(), "日均总完成度", summary.settlementGrade,
@@ -78,7 +77,7 @@ public final class GraffitiPoster {
     private static void draw(Context context, Canvas canvas, Bitmap background, String subtitle,
                              String date, double progress, String percent, String progressCaption,
                              String grade, String gradeCaption, String durationCaption, String duration,
-                             Runnable cancel) {
+                             Runnable cancel) throws IOException {
         RangeSummary.check(cancel);
         Paint p = new Paint(Paint.ANTI_ALIAS_FLAG | Paint.FILTER_BITMAP_FLAG);
         Typeface calligraphy = brush(context);
@@ -90,12 +89,16 @@ public final class GraffitiPoster {
                 new int[]{0x08000000, 0x28000000, 0x00000000}, null, Shader.TileMode.CLAMP));
         canvas.drawRect(0, 0, WIDTH, 1060, p); p.setShader(null);
 
+        if ("今日记录".equals(subtitle)) {
+            GradeArtwork.drawDailyTitle(context.getAssets(),canvas,cancel);
+        } else {
         canvas.save(); canvas.rotate(-11, 85, 236);
         brushText(canvas, p, "时本", 65, 234, 200, 555, WHITE, calligraphy, 91);
         canvas.restore();
         canvas.save(); canvas.rotate(-10, 96, 355);
         brushText(canvas, p, subtitle, 88, 355, 120, 585, WHITE, calligraphy, 124);
         canvas.restore();
+        }
         String[] dateRows = dateLines(date);
         canvas.save(); canvas.rotate(-8, 109, 429);
         for (int i = 0; i < dateRows.length; i++)
@@ -130,9 +133,13 @@ public final class GraffitiPoster {
         canvas.drawLine(570, 496, 615, 529, p); canvas.drawLine(615, 529, 596, 491, p);
         canvas.restore();
         drawCrown(canvas, p);
-        drawGrade(canvas, p, grade, calligraphy);
-        canvas.save(); canvas.rotate(-14, 852, 904);
-        text(canvas, p, "KEEP GOING!", 818, 914, 29, CYAN, calligraphy); canvas.restore();
+        GradeArtwork.Spec artwork=GradeArtwork.forGrade(grade);
+        if(artwork==null) {
+            canvas.save();canvas.rotate(-12,725,698);
+            fitText(canvas,p,"未知",471,741,183,485,CYAN,calligraphy);canvas.restore();
+        } else GradeArtwork.draw(context.getAssets(),canvas,artwork,cancel);
+        canvas.save(); canvas.rotate(-14, 852, 944);
+        text(canvas, p, "KEEP GOING!", 818, 954, 29, CYAN, calligraphy); canvas.restore();
 
         drawDuration(canvas, p, durationCaption, duration, calligraphy);
         canvas.save(); canvas.rotate(-8, 750, 1215);
@@ -200,79 +207,6 @@ public final class GraffitiPoster {
         c.drawLine(715, 407, 795, 405, p);
         for (float[] pt : new float[][]{{699,342},{760,316},{821,335}}) c.drawCircle(pt[0], pt[1], 4, p);
         c.restore(); p.setStyle(Paint.Style.FILL);
-    }
-
-    /** Hand-drawn vector alphabet, deliberately independent of installed fonts. */
-    static Path gradePath(String grade) {
-        Path result = new Path(); float x = 0;
-        for (int i = 0; i < grade.length(); i++) {
-            char ch = grade.charAt(i); Path letter = glyph(ch);
-            if (letter == null) return null;
-            letter.offset(x, 0); result.addPath(letter); x += ch == '+' || ch == '-' ? 63 : 105;
-        }
-        result.setFillType(Path.FillType.EVEN_ODD); return result;
-    }
-
-    static RectF gradeBounds(String grade) {
-        Path path = mappedGrade(grade); if (path == null) return new RectF(490, 560, 965, 760);
-        RectF bounds = new RectF(); path.computeBounds(bounds, true); return bounds;
-    }
-
-    private static Path mappedGrade(String grade) {
-        Path path = gradePath(grade); if (path == null) return null;
-        RectF box = new RectF(); path.computeBounds(box, true);
-        Matrix matrix = new Matrix();
-        // Shared four-corner envelope guarantees SSS+ fits while retaining forceful perspective.
-        float[] src = {box.left, box.top, box.right, box.top, box.right, box.bottom, box.left, box.bottom};
-        float[] dst = {566, 498, 1001, 437, 968, 841, 420, 933};
-        if (grade.length() >= 3) dst = new float[]{464, 536, 1008, 452, 982, 823, 411, 906};
-        matrix.setPolyToPoly(src, 0, dst, 0, 4); path.transform(matrix); return path;
-    }
-
-    private static void drawGrade(Canvas c, Paint p, String grade, Typeface face) {
-        Path path = mappedGrade(grade);
-        if (path == null) {
-            c.save(); c.rotate(-12, 725, 698);
-            fitText(c, p, grade, 471, 741, 183, 485, CYAN, face); c.restore(); return;
-        }
-        p.setStrokeJoin(Paint.Join.MITER); p.setStrokeCap(Paint.Cap.BUTT);
-        c.save(); c.translate(-8, 9); p.setColor(INK); p.setStyle(Paint.Style.STROKE); p.setStrokeWidth(17); c.drawPath(path, p);
-        p.setColor(WHITE); p.setStrokeWidth(8); c.drawPath(path, p); c.restore();
-        p.setColor(CYAN); p.setStyle(Paint.Style.FILL); c.drawPath(path, p);
-        // Fixed-seed dry-brush cuts are clipped to the live path, never to a baked grade image.
-        c.save(); c.clipPath(path); Random random = new Random(87023);
-        for (int i = 0; i < 195; i++) {
-            float x = 414 + random.nextFloat() * 608, y = 423 + random.nextFloat() * 520;
-            p.setColor(i % 5 == 0 ? 0x99ffffff : 0xd00b1718); p.setStrokeWidth(i % 4 == 0 ? 2.3f : 1.1f);
-            c.drawLine(x, y, x + 5 + random.nextFloat() * 48, y - 3 - random.nextFloat() * 18, p);
-        }
-        c.restore(); p.setStyle(Paint.Style.FILL);
-    }
-
-    private static Path glyph(char c) {
-        Path p;
-        switch (c) {
-            case 'S': return polygon(96,3, 23,0, 0,31, 4,80, 62,105, 64,143, 3,146, 0,180,
-                    72,178, 98,149, 96,96, 36,67, 35,38, 92,35);
-            case 'A':
-                p = polygon(30,3, 71,0, 101,180, 68,179, 59,139, 29,141, 19,180, -11,182);
-                p.addPath(polygon(37,109, 52,108, 45,58)); p.setFillType(Path.FillType.EVEN_ODD); return p;
-            case 'B':
-                p = polygon(2,0, 67,2, 93,27, 91,73, 74,87, 99,105, 97,152, 69,179, 0,181);
-                p.addPath(polygon(31,34, 59,34, 62,65, 30,68));
-                p.addPath(polygon(30,108, 64,106, 65,144, 29,146)); p.setFillType(Path.FillType.EVEN_ODD); return p;
-            case 'C': return polygon(96,0, 25,3, 1,32, -2,148, 24,179, 97,180, 98,144,
-                    37,145, 32,135, 34,44, 41,34, 96,35);
-            case 'D':
-                p = polygon(2,2, 60,0, 95,31, 97,147, 64,179, 0,181);
-                p.addPath(polygon(32,36, 54,35, 62,45, 63,132, 53,145, 31,146)); p.setFillType(Path.FillType.EVEN_ODD); return p;
-            case 'E': return polygon(2,3, 97,0, 91,35, 33,37, 31,71, 82,67, 78,105,
-                    31,108, 29,145, 96,140, 92,178, -1,181);
-            case '+': return polygon(21,58, 43,54, 43,88, 69,85, 65,109, 43,112, 41,145,
-                    17,149, 20,116, -4,119, -1,93, 20,90);
-            case '-': return polygon(-1,90, 62,80, 58,110, -5,124);
-            default: return null;
-        }
     }
 
     private static Path polygon(float... points) {

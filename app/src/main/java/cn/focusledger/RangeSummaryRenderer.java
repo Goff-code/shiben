@@ -25,8 +25,9 @@ public final class RangeSummaryRenderer {
     public static final int WIDTH = 1080, MAX_HEIGHT = 8000, HIDDEN_TASK_HEIGHT = GraffitiPoster.HEIGHT;
     public static final long MAX_OUTPUT_PIXELS = (long) WIDTH * MAX_HEIGHT;
     public static final long MAX_BACKGROUND_PIXELS = 512L * 1024;
-    /** ARGB_8888 output + bounded background + encoder/sampled-preview reserve, below 48 MiB. */
+    /** ARGB output + background + one sequential title/grade sprite + encoder/preview reserve. */
     public static final long BITMAP_BUDGET_BYTES = 48L * 1024 * 1024;
+    public static final long MAX_LETTERING_BYTES = GradeArtwork.MAX_SPRITE_PIXELS * 4L;
     public static final long AUXILIARY_RESERVE_BYTES = 8L * 1024 * 1024;
     public static final String TOO_LARGE = "任务内容过长，无法在安全内存范围内生成单张清晰完整的图片；请缩小日期范围或改用 Markdown 导出。";
 
@@ -45,7 +46,7 @@ public final class RangeSummaryRenderer {
         if (width <= 0 || height <= 0 || backgroundPixels < 0) throw new IOException(TOO_LARGE);
         try {
             long output = Math.multiplyExact(Math.multiplyExact((long) width, height), 4L);
-            return Math.addExact(Math.addExact(output, Math.multiplyExact(backgroundPixels, 4L)), AUXILIARY_RESERVE_BYTES);
+            return Math.addExact(Math.addExact(output, Math.multiplyExact(backgroundPixels, 4L)), Math.addExact(AUXILIARY_RESERVE_BYTES, MAX_LETTERING_BYTES));
         } catch (ArithmeticException overflow) { throw new IOException(TOO_LARGE, overflow); }
     }
 
@@ -209,7 +210,7 @@ public final class RangeSummaryRenderer {
         lines.add(line);
     }
 
-    private static void draw(Context context, Canvas canvas, Bitmap background, RangeSummary summary, Plan plan, Runnable cancel) {
+    private static void draw(Context context, Canvas canvas, Bitmap background, RangeSummary summary, Plan plan, Runnable cancel) throws IOException {
         RangeSummary.check(cancel);
         Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG | Paint.FILTER_BITMAP_FLAG);
         canvas.drawColor(BG);

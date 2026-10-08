@@ -4,9 +4,12 @@ import android.content.Context;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.graphics.Paint;
-import android.graphics.RectF;
 import android.graphics.Typeface;
 import java.io.File;
+import java.io.InputStream;
+import java.security.MessageDigest;
+import java.util.HashSet;
+import java.util.Set;
 import java.lang.reflect.Constructor;
 import java.lang.reflect.Method;
 import java.time.LocalDate;
@@ -30,6 +33,20 @@ public final class GraffitiInstrumentationChecks {
                 File.class, ExportWorker.Job.class, boolean.class); render.setAccessible(true);
         return (ExportWorker.Result) render.invoke(worker, V2Reports.DateRange.day(snapshot.day),
                 Collections.singletonList(snapshot), directory, job, hidden);
+    }
+    private static String hex(byte[] bytes) {
+        StringBuilder text = new StringBuilder();
+        for (byte value : bytes) text.append(String.format(java.util.Locale.ROOT, "%02x", value & 255));
+        return text.toString();
+    }
+    private static double gradeProgress(String grade) {
+        switch (grade) {
+            case "SSS+": case "SSS": case "SS": case "S": return 100;
+            case "A+": return 97; case "A": return 94; case "A-": return 92.75;
+            case "B+": return 87; case "B": return 84; case "B-": return 80;
+            case "C": return 70; case "D": return 60; case "E": return 30;
+            default: throw new AssertionError("Unexpected fixture grade");
+        }
     }
     public static void run(Context context, Consumer<String> report) throws Exception {
         File root = new File(context.getFilesDir(), "qa-graffiti"); root.mkdirs();
@@ -56,19 +73,47 @@ public final class GraffitiInstrumentationChecks {
         check((long) bg.getWidth() * bg.getHeight() <= GraffitiPoster.MAX_BACKGROUND_PIXELS,
                 "offline studio photo decode remains inside 512K pixel budget", report); bg.recycle();
 
-        String[] grades = {"S", "SS", "SSS", "SSS+", "A+", "A", "A-", "B+", "B", "B-", "C", "D", "E"};
-        for (String grade : grades) {
-            check(GraffitiPoster.gradePath(grade) != null && !GraffitiPoster.gradePath(grade).isEmpty(),
-                    "each supported grade has a real nonempty vector path: " + grade, report);
-            RectF bounds = GraffitiPoster.gradeBounds(grade);
-            check(bounds.left >= 400 && bounds.right <= 1010 && bounds.top >= 425 && bounds.bottom <= 940,
-                    "hand-drawn live grade fits poster envelope without clipping: " + grade, report);
+        Set<String> renderedHashes = new HashSet<>();
+        for (GradeArtwork.Spec spec : GradeArtwork.all()) {
+            MessageDigest digest = MessageDigest.getInstance("SHA-256");
+            try (InputStream in = context.getAssets().open(spec.assetPath())) {
+                byte[] block = new byte[65536]; int count;
+                while ((count = in.read(block)) != -1) digest.update(block, 0, count);
+            }
+            check(hex(digest.digest()).equals(spec.sha256),
+                    "bundled grade PNG is byte-identical to supplied original: " + spec.grade, report);
+            Bitmap original;
+            try (InputStream in = context.getAssets().open(spec.assetPath())) {
+                BitmapFactory.Options options = new BitmapFactory.Options(); options.inScaled = false;
+                options.inSampleSize = GradeArtwork.sampleSize(spec.width, spec.height);
+                original = BitmapFactory.decodeStream(in, null, options);
+            }
+            try {
+                check(original != null && original.hasAlpha()
+                                && original.getAllocationByteCount() <= GradeArtwork.MAX_SPRITE_PIXELS * 4L,
+                        "original alpha retained with bounded native decode: " + spec.grade, report);
+            } finally { if (original != null) original.recycle(); }
+            GradeArtwork.Placement bounds = GradeArtwork.placement(spec);
+            check(bounds.left >= GradeArtwork.SAFE_LEFT - .01f && bounds.right() <= GradeArtwork.SAFE_RIGHT + .01f
+                            && bounds.top >= GradeArtwork.SAFE_TOP - .01f && bounds.bottom() <= GradeArtwork.SAFE_BOTTOM + .01f,
+                    "whole original canvas fits safe poster envelope without clipping: " + spec.grade, report);
+            double value = gradeProgress(spec.grade);
+            check(spec.grade.equals(cn.focusledger.core.SettlementGrade.resolve(value, value == 100, spec.grade)),
+                    "native fixture matches unchanged settlement rules: " + spec.grade, report);
+            List<LedgerStore.DayTask> fixture = "A-".equals(spec.grade) ? tasks : Collections.singletonList(
+                    new LedgerStore.DayTask("fixture", "私密任务不应出现在摘要", 1, (int) value, 1, 11057000, false, null));
+            LedgerStore.DaySnapshot rank = new LedgerStore.DaySnapshot(day, fixture, value, true, 11057000, spec.grade);
+            ExportWorker.Result rendered = render(context, rank, new File(root, "grades/" + spec.fileName.replace(".png", "")), true);
+            BitmapFactory.decodeFile(rendered.file.getAbsolutePath(), size);
+            check(size.outWidth == 1080 && size.outHeight == 1440 && rendered.images.size() == 1,
+                    "production hidden PNG renders grade " + spec.grade + " at " + rendered.file.getAbsolutePath(), report);
+            check(renderedHashes.add(hex(MessageDigest.getInstance("SHA-256").digest(java.nio.file.Files.readAllBytes(rendered.file.toPath())))),
+                    "each selected grade creates a distinct native PNG: " + spec.grade, report);
         }
+        check(renderedHashes.size() == 13, "all thirteen grades were rendered through the production path", report);
+        check(GradeArtwork.forGrade("未知") == null, "unknown stays explicit and never selects E artwork", report);
         List<LedgerStore.DayTask> completeTasks = Collections.singletonList(
                 new LedgerStore.DayTask("complete", "完成任务", 1, 100, 1, 11057000, false, null));
-        ExportWorker.Result top = render(context, new LedgerStore.DaySnapshot(day, completeTasks, 100, true, 11057000, "SSS+"),
-                new File(root, "sss-plus"), true);
-        check(top.file.isFile(), "true 100% SSS+ fixture uses dynamic four-character vector grade", report);
         render(context, new LedgerStore.DaySnapshot(day, tasks, Double.NaN, false, -1, "未知"),
                 new File(root, "unknown"), true);
         check(true, "unknown completion/time/grade render explicitly without converting them to zero", report);

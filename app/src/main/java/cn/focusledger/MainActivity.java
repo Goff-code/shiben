@@ -13,6 +13,7 @@ import android.text.*;
 import android.view.*;
 import android.widget.*;
 import cn.focusledger.core.Session;
+import cn.focusledger.core.CompletionAlertMode;
 import cn.focusledger.core.TimerEngine;
 import java.io.*;
 import java.time.*;
@@ -243,7 +244,34 @@ public final class MainActivity extends Activity {
         }catch(RuntimeException invalid){showManualError(invalid.getMessage()==null?"补记未保存，请重试":invalid.getMessage());}finally{if(!saved){manualSaving=false;dlg.getButton(-1).setEnabled(true);}}
     }
     private void renderWeights(){header("进度如何计算",true);gap(body,18);LedgerStore.DaySnapshot d=store.getDaySnapshot(today);UiKit.Ring r=new UiKit.Ring(this);r.set(d.totalProgress/100,V2Reports.totalPercent(d),"今日总进度",false);body.addView(r,new LinearLayout.LayoutParams(-1,dp(this,220)));LinearLayout card=glassPanel();for(LedgerStore.DayTask t:d.items)if(!t.archived){LinearLayout line=row();line.setGravity(Gravity.CENTER_VERTICAL);line.setPadding(0,dp(this,10),0,dp(this,10));line.addView(new UiKit.TaskBadge(this,t.title),new LinearLayout.LayoutParams(dp(this,34),dp(this,34)));TextView title=label(t.title,15,INK,false);title.setPadding(dp(this,10),0,dp(this,8),0);line.addView(title,new LinearLayout.LayoutParams(0,-2,1));TextView numbers=label((t.progress<0?"未知":t.progress+"%")+"\n× "+percent(t.weight*100),13,MUTED,false);numbers.setGravity(Gravity.END);line.addView(numbers,new LinearLayout.LayoutParams(dp(this,56*Math.max(1,getResources().getConfiguration().fontScale)),-2));card.addView(line);divider(card);}body.addView(card);gap(body,14);LinearLayout explanation=glassPanel();explanation.addView(label("1  按任务优先级分配权重\n2  前面的任务依次占剩余权重的一半\n3  最后一个任务获得全部剩余权重\n\n部分完成按比例计算；没有任务时为 0%。",14,INK,false));gap(explanation,14);notice(explanation,"专注计时不会自动改变任务进度");body.addView(explanation);}
-    private void renderSettings(){header("提醒设置",true);gap(body,26);toggle("专注结束提醒","reminders",true);toggle("声音","sound",true);toggle("振动","vibration",true);gap(body,22);body.addView(menu(timer.notificationsGranted()?"通知权限 · 已开启":"通知权限 · 未开启","bell",this::requestNotifications));gap(body,12);body.addView(menu(timer.exactAlarmGranted()?"精确提醒 · 已开启":"精确提醒 · 可选开启","history",()->{if(Build.VERSION.SDK_INT>=31)launch(new Intent(Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM,Uri.parse("package:"+getPackageName())));}));gap(body,22);body.addView(label("通知关闭时仍可使用计时与记录。未开启精确提醒时，锁屏提醒可能延迟，返回后会校正。\n\nrealme 等系统可能限制后台运行，可在系统应用设置中允许后台活动。强行停止应用后无法继续提醒。设备重启时，只保留已保存的专注检查点，不猜测关机期间投入。",14,MUTED,false));gap(body,18);body.addView(button("前往系统应用设置",false,()->launch(new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS,Uri.parse("package:"+getPackageName())))));gap(body,12);body.addView(label("声音和振动也受系统通知渠道、音量与勿扰模式控制。",12,MUTED,false));}
+    private void renderSettings(){
+        header("提醒设置",true);gap(body,26);toggle("专注结束提醒","reminders",true);gap(body,14);
+        LinearLayout modes=glassPanel();modes.addView(label("倒计时结束提醒方式",17,INK,true));gap(modes,8);
+        RadioGroup choices=new RadioGroup(this);choices.setOrientation(RadioGroup.VERTICAL);
+        CompletionAlertMode selected=ReminderSettings.mode(this);
+        for(CompletionAlertMode mode:CompletionAlertMode.values()){
+            RadioButton option=new RadioButton(this);option.setId(View.generateViewId());option.setTag(mode);
+            option.setText(mode.label);option.setTextSize(17);option.setTextColor(INK);
+            option.setMinHeight(dp(this,52));option.setPadding(dp(this,8),dp(this,8),dp(this,8),dp(this,8));
+            choices.addView(option,new RadioGroup.LayoutParams(-1,-2));if(mode==selected)option.setChecked(true);
+        }
+        modes.addView(choices);gap(modes,10);
+        modes.addView(label("响铃使用系统通知音，静音时仅显示通知。关闭上方开关后不发送到时通知；再次开启会保留所选方式。",13,MUTED,false));
+        TextView channelWarning=label(TimerService.completionChannelWarning(this),13,MUTED,false);
+        channelWarning.setVisibility(channelWarning.getText().length()==0?View.GONE:View.VISIBLE);modes.addView(channelWarning);
+        choices.setOnCheckedChangeListener((group,id)->{
+            View choice=group.findViewById(id);if(choice==null)return;
+            ReminderSettings.setMode(this,(CompletionAlertMode)choice.getTag());
+            channelWarning.setText(TimerService.completionChannelWarning(this));
+            channelWarning.setVisibility(channelWarning.getText().length()==0?View.GONE:View.VISIBLE);
+        });
+        body.addView(modes);gap(body,22);
+        body.addView(menu(timer.notificationsGranted()?"通知权限 · 已开启":"通知权限 · 未开启","bell",this::requestNotifications));gap(body,12);
+        body.addView(menu(timer.exactAlarmGranted()?"精确提醒 · 已开启":"精确提醒 · 可选开启","history",()->{if(Build.VERSION.SDK_INT>=31)launch(new Intent(Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM,Uri.parse("package:"+getPackageName())));}));gap(body,22);
+        body.addView(label("通知关闭时仍可使用计时与记录。未开启精确提醒时，锁屏提醒可能延迟，返回后会校正。\n\nrealme 等系统可能限制后台运行，可在系统应用设置中允许后台活动。强行停止应用后无法继续提醒。设备重启时，只保留已保存的专注检查点，不猜测关机期间投入。",14,MUTED,false));gap(body,18);
+        body.addView(button("前往系统应用设置",false,()->launch(new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS,Uri.parse("package:"+getPackageName())))));gap(body,12);
+        body.addView(label("响铃和震动受系统通知渠道、通知音量与勿扰模式控制。更改模式不会覆盖你在系统中设置的通知方式。",12,MUTED,false));
+    }
     private void toggle(String title,String key,boolean defaultValue){LinearLayout r=row();r.setGravity(Gravity.CENTER_VERTICAL);r.setPadding(dp(this,16),dp(this,12),dp(this,16),dp(this,12));r.setMinimumHeight(dp(this,64));r.setBackground(shape(0xEFFFFFFF,0x44DDE5E1,16,this));TextView t=label(title,18,INK,false);r.addView(t,new LinearLayout.LayoutParams(0,-2,1));t.setGravity(Gravity.CENTER_VERTICAL);Switch s=new Switch(this);s.setChecked(getSharedPreferences("shiben-settings",MODE_PRIVATE).getBoolean(key,defaultValue));s.setContentDescription(title);s.setOnCheckedChangeListener((v,on)->getSharedPreferences("shiben-settings",MODE_PRIVATE).edit().putBoolean(key,on).apply());r.addView(s);body.addView(r);gap(body,8);}
     private void requestNotifications(){if(Build.VERSION.SDK_INT>=33&&checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)!=PackageManager.PERMISSION_GRANTED)requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS},NOTIFY);else launch(new Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(Settings.EXTRA_APP_PACKAGE,getPackageName()));}
     private void renderBackup(){header("本地存储与备份",true);gap(body,26);body.addView(label("历史记录保存在本机",21,INK,true));gap(body,10);body.addView(label("SQLite 保存原始记录；每日 Markdown 持久留存，不会自动过期。",15,MUTED,false));gap(body,22);notice(body,"卸载应用或清除应用数据会导致本机记录丢失。请先导出到你选择的位置。");gap(body,26);body.addView(button("选择外部备份文件夹",true,()->launchForResult(new Intent(Intent.ACTION_OPEN_DOCUMENT_TREE).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION|Intent.FLAG_GRANT_WRITE_URI_PERMISSION|Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION),BACKUP_TREE)));gap(body,12);body.addView(label("选择后，每日 Markdown 将同步到该文件夹，同日期文件会更新。文件夹由系统提供；访问权限失效会明确提示。外部备份是可读记录，不是应用内自动恢复包。",14,MUTED,false));gap(body,14);backupStatus=label(DailyArchive.get(this).getBackupStatus(),13,MUTED,false);body.addView(backupStatus);gap(body,16);body.addView(button("立即更新备份",false,()->{DailyArchive.schedule(this);toast("已安排更新备份");}));gap(body,10);body.addView(button("停止外部自动备份",false,()->new AlertDialog.Builder(this,R.style.ShibenDialog).setTitle("停止外部自动备份？").setMessage("已保存的外部文件不会被删除。").setNegativeButton("取消",null).setPositiveButton("停止",(d,w)->{DailyArchive.get(this).clearBackupTree();render();}).show()));gap(body,20);body.addView(button("导出记录",true,()->navigate("export")));}

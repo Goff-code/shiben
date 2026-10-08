@@ -10,7 +10,7 @@ import android.os.*;
 import cn.focusledger.core.*;
 
 public final class TimerService extends Service {
-    private static final String LIVE="focus_live", DONE="focus_done";
+    private static final String LIVE="focus_live";
     private final Handler handler=new Handler(Looper.getMainLooper());
     private final Runnable tick=new Runnable(){public void run(){
         TimerCoordinator timer=TimerCoordinator.get(TimerService.this);
@@ -26,10 +26,8 @@ public final class TimerService extends Service {
         NotificationChannel live=new NotificationChannel(LIVE,"正在专注",NotificationManager.IMPORTANCE_LOW);
         live.setDescription("手动倒计时与暂停、继续控制");live.setSound(null,null);
         n.createNotificationChannel(live);
-        NotificationChannel done=new NotificationChannel(DONE,"专注到时",NotificationManager.IMPORTANCE_HIGH);
-        done.setDescription("倒计时结束时提醒；声音与震动可在系统设置中调整");
-        done.enableVibration(true);done.setVibrationPattern(new long[]{0,250,150,250});
-        n.createNotificationChannel(done);
+        // The released focus_done channel is no longer used. Leave any existing
+        // channel and its user settings intact, without creating it on new installs.
     }
     static PendingIntent open(Context c){return PendingIntent.getActivity(c,1,new Intent(c,MainActivity.class),PendingIntent.FLAG_UPDATE_CURRENT|PendingIntent.FLAG_IMMUTABLE);}
     private Notification liveNotification(){
@@ -46,23 +44,32 @@ public final class TimerService extends Service {
         if(!paused)b.setWhen(System.currentTimeMillis()+remaining).setUsesChronometer(true).setChronometerCountDown(true);
         return b.build();
     }
-    private static String completionChannel(Context context) {
-        android.content.SharedPreferences prefs=context.getSharedPreferences("shiben-settings",Context.MODE_PRIVATE);
-        boolean sound=prefs.getBoolean("sound",true), vibration=prefs.getBoolean("vibration",true);
-        String id="shiben_done_"+(sound?"sound":"quiet")+"_"+(vibration?"vibrate":"still");
-        NotificationChannel channel=new NotificationChannel(id,"专注结束 · "+(sound?"声音":"静音")+" · "+(vibration?"振动":"无振动"),NotificationManager.IMPORTANCE_HIGH);
+    static String completionChannel(Context context) {
+        CompletionAlertMode mode=ReminderSettings.mode(context);
+        String id=mode.channelId();
+        NotificationChannel channel=new NotificationChannel(id,"专注结束 · "+mode.label,NotificationManager.IMPORTANCE_HIGH);
         channel.setDescription("声音和振动仍由系统音量、勿扰及渠道设置共同控制");
-        channel.enableVibration(vibration);
-        if(vibration)channel.setVibrationPattern(new long[]{0,250,150,250});
-        if(sound)channel.setSound(RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION),new AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_NOTIFICATION).build());
+        channel.enableVibration(mode.vibration);
+        if(mode.vibration)channel.setVibrationPattern(new long[]{0,250,150,250});
+        if(mode.sound)channel.setSound(RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION),new AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_NOTIFICATION).build());
         else channel.setSound(null,null);
         ((NotificationManager)context.getSystemService(NOTIFICATION_SERVICE)).createNotificationChannel(channel);
         return id;
     }
+    static String completionChannelWarning(Context context) {
+        CompletionAlertMode mode=ReminderSettings.mode(context);
+        NotificationChannel channel=((NotificationManager)context.getSystemService(NOTIFICATION_SERVICE)).getNotificationChannel(mode.channelId());
+        if(channel==null)return "";
+        if(channel.getImportance()==NotificationManager.IMPORTANCE_NONE)return "此提醒方式的系统通知渠道已关闭，请在系统通知设置中检查。";
+        if((channel.getSound()!=null)!=mode.sound||channel.shouldVibrate()!=mode.vibration
+            ||((mode.sound||mode.vibration)&&channel.getImportance()<NotificationManager.IMPORTANCE_DEFAULT))
+            return "此提醒方式的系统渠道设置与所选模式不同，实际以系统设置为准。";
+        return "";
+    }
     static String format(long ms){long sec=(ms+999)/1000;return String.format(java.util.Locale.ROOT,"%02d:%02d",sec/60,sec%60);}
     public static void notifyFinished(Context context,Session session){
         channels(context);
-        if(!context.getSharedPreferences("shiben-settings",Context.MODE_PRIVATE).getBoolean("reminders",true)||!TimerCoordinator.get(context).notificationsGranted())return;
+        if(!ReminderSettings.enabled(context)||!TimerCoordinator.get(context).notificationsGranted())return;
         String title="expired".equals(session.reason)?"本轮专注已结束":"计时已安全恢复";
         String text="expired".equals(session.reason)?session.taskTitle+" · 已记录 "+format(session.actualMs)+"，任务进度需手动更新。":"设备重启，本轮仅记录重启前已保存的专注时间。";
         Notification n=new Notification.Builder(context,completionChannel(context)).setSmallIcon(R.drawable.ic_notification).setContentTitle(title).setContentText(text)

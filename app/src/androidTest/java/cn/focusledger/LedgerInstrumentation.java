@@ -23,7 +23,9 @@ public final class LedgerInstrumentation extends Instrumentation {
     @Override public void callActivityOnResume(Activity a){super.callActivityOnResume(a);screen=a;}
     @Override public void onStart(){Bundle result=new Bundle();try{
         context=getTargetContext();
+        if("lettering_study".equals(suite)){LetteringStudyChecks.run(context,getContext(),name->check(true,name));result.putString("stream",log+"\nOK ("+passed+" checks)\n");result.putInt("checks",passed);finish(Activity.RESULT_OK,result);return;}
         if("graffiti".equals(suite)){GraffitiInstrumentationChecks.run(context,name->check(true,name));result.putString("stream",log+"\nOK ("+passed+" checks)\n");result.putInt("checks",passed);finish(Activity.RESULT_OK,result);return;}
+        if("reminders".equals(suite)){runReminders();result.putString("stream",log+"\nOK ("+passed+" checks)\n");result.putInt("checks",passed);finish(Activity.RESULT_OK,result);return;}
         if("hidden_preview".equals(suite)){GalleryInstrumentationChecks.runHiddenPreview(context,name->check(true,name));result.putString("stream",log+"\nOK ("+passed+" checks)\n");result.putInt("checks",passed);finish(Activity.RESULT_OK,result);return;}
         if("gallery".equals(suite)){GalleryInstrumentationChecks.run(context,name->check(true,name));RangeSummaryInstrumentationChecks.run(context,name->check(true,name));result.putString("stream",log+"\nOK ("+passed+" checks)\n");result.putInt("checks",passed);finish(Activity.RESULT_OK,result);return;}
         if("gallery_ui".equals(suite)){runGalleryUi();result.putString("stream",log+"\nOK ("+passed+" checks)\n");result.putInt("checks",passed);finish(Activity.RESULT_OK,result);return;}
@@ -56,7 +58,7 @@ public final class LedgerInstrumentation extends Instrumentation {
                     DailyArchive.schedule(context);SystemClock.sleep(2500);
                 }
                 check(!store.getSessions().isEmpty()&&store.getRecordedDays().size()>=2,"upgrade fixture contains actual focus history and prior-day records");runOnMainSync(()->{if(!timer.engine().isActive())timer.start(store.getTasks(LocalDate.now()).get(0),15);});SystemClock.sleep(1200);runOnMainSync(timer::pause);TimerEngine.State state=store.loadTimer();org.json.JSONObject expected=new org.json.JSONObject();expected.put("sessionId",state.sessionId);expected.put("taskId",state.taskId);expected.put("plannedMs",state.plannedMs);expected.put("actualMs",state.accumulatedMs);expected.put("taskCount",store.getTasks(LocalDate.now()).size());expected.put("sessionCount",store.getSessions().size());expected.put("totalProgress",store.getDaySnapshot(LocalDate.now()).totalProgress);context.getSharedPreferences("shiben-settings",Context.MODE_PRIVATE).edit().putBoolean("reminders",true).putBoolean("sound",false).putBoolean("vibration",false).commit();expected.put("settings",new org.json.JSONObject(context.getSharedPreferences("shiben-settings",Context.MODE_PRIVATE).getAll()));try(FileOutputStream out=new FileOutputStream(expectation)){out.write(expected.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8));}check(state.paused,"paused timer persisted before package update");waitFor("已暂停",15000);screenshot("17-upgrade-paused-v3");}
-            else{check(context.getPackageManager().getPackageInfo(context.getPackageName(),0).versionCode==6,"gallery patch versionCode6 is installed");org.json.JSONObject expected=new org.json.JSONObject(new String(java.nio.file.Files.readAllBytes(expectation.toPath()),java.nio.charset.StandardCharsets.UTF_8));TimerEngine.State state=store.loadTimer();check(state!=null&&state.paused,"paused timer survives in-place package update");check(expected.getString("sessionId").equals(state.sessionId)&&expected.getString("taskId").equals(state.taskId),"timer and task identities unchanged after update");check(expected.getLong("plannedMs")==state.plannedMs&&expected.getLong("actualMs")==state.accumulatedMs,"planned and accumulated timer duration unchanged");check(expected.getInt("taskCount")==store.getTasks(LocalDate.now()).size(),"task list count survives update");check(expected.getInt("sessionCount")==store.getSessions().size(),"session history count survives update");check(Math.abs(expected.getDouble("totalProgress")-store.getDaySnapshot(LocalDate.now()).totalProgress)<1e-9,"weighted manual progress survives update");if(expected.has("settings")){org.json.JSONObject settings=expected.getJSONObject("settings");for(Iterator<String> keys=settings.keys();keys.hasNext();){String key=keys.next();check(Objects.equals(settings.get(key),context.getSharedPreferences("shiben-settings",Context.MODE_PRIVATE).getAll().get(key)),"reminder preference survives update: "+key);}}waitFor("已暂停",15000);screenshot("18-upgrade-paused-v5");}
+            else{check(context.getPackageManager().getPackageInfo(context.getPackageName(),0).versionCode==7,"integrated 3.0 versionCode7 is installed");org.json.JSONObject expected=new org.json.JSONObject(new String(java.nio.file.Files.readAllBytes(expectation.toPath()),java.nio.charset.StandardCharsets.UTF_8));TimerEngine.State state=store.loadTimer();check(state!=null&&state.paused,"paused timer survives in-place package update");check(expected.getString("sessionId").equals(state.sessionId)&&expected.getString("taskId").equals(state.taskId),"timer and task identities unchanged after update");check(expected.getLong("plannedMs")==state.plannedMs&&expected.getLong("actualMs")==state.accumulatedMs,"planned and accumulated timer duration unchanged");check(expected.getInt("taskCount")==store.getTasks(LocalDate.now()).size(),"task list count survives update");check(expected.getInt("sessionCount")==store.getSessions().size(),"session history count survives update");check(Math.abs(expected.getDouble("totalProgress")-store.getDaySnapshot(LocalDate.now()).totalProgress)<1e-9,"weighted manual progress survives update");if(expected.has("settings")){org.json.JSONObject settings=expected.getJSONObject("settings");for(Iterator<String> keys=settings.keys();keys.hasNext();){String key=keys.next();check(Objects.equals(settings.get(key),context.getSharedPreferences("shiben-settings",Context.MODE_PRIVATE).getAll().get(key)),"reminder preference survives update: "+key);}}waitFor("已暂停",15000);screenshot("18-upgrade-paused-v5");}
             result.putString("stream",log+"\nOK ("+passed+" checks)\n");result.putInt("checks",passed);finish(Activity.RESULT_OK,result);return;
         }
         if("saf".equals(suite)){screen=startActivitySync(new Intent(context,MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));idle();tab("今日");desc("更多");desc("导出记录");click("预览导出");waitFor("保存文件",30000);click("保存文件");Bundle ready=new Bundle();ready.putString("stream","SAF_PICKER_READY\n");sendStatus(0,ready);saveThroughSystemPicker();waitForSavedFile();check(true,"actual SAF picker returns successful native save dialog");String source=field("pendingFile",String.class);File folder=new File(context.getFilesDir(),"qa-v2");folder.mkdirs();java.nio.file.Files.copy(new File(source).toPath(),new File(folder,"saf-source.md").toPath(),java.nio.file.StandardCopyOption.REPLACE_EXISTING);screenshot("16-saf-save-success");String copyId=field("copyJobId",String.class),destination=field("copyDestination",String.class),delivered=field("copyDeliveredId",String.class);click("返回");recreate();check(copyId!=null&&copyId.equals(field("copyJobId",String.class)),"save job identity survives Activity recreation");check(destination!=null&&destination.equals(field("copyDestination",String.class)),"chosen document URI survives Activity recreation");check(delivered!=null&&delivered.equals(field("copyDeliveredId",String.class))&&!has("文件已保存"),"completed save feedback is not duplicated after recreation");String oldExport=field("exportJobId",String.class);back();click("预览导出");waitFor("保存文件",30000);String freshExport=field("exportJobId",String.class);check(!oldExport.equals(freshExport)&&jobListener(oldExport)==null,"repeated export detaches previous terminal Activity listener");recreate();check(listenerCapturesActivity(jobListener(freshExport)),"recreated preview attaches only the current Activity");String oldCopy=field("copyJobId",String.class);runOnMainSync(()->((MainActivity)screen).onActivityResult(401,Activity.RESULT_OK,new Intent().setData(android.net.Uri.parse(destination))));waitFor("文件已保存",30000);check(!oldCopy.equals(field("copyJobId",String.class))&&jobListener(oldCopy)==null,"repeated authorized document copy detaches previous Activity listener");click("返回");result.putString("stream",log+"\nOK ("+passed+" checks)\n");result.putInt("checks",passed);finish(Activity.RESULT_OK,result);return;}
@@ -157,7 +159,7 @@ public final class LedgerInstrumentation extends Instrumentation {
         tab("今日");check(has("今日进度")&&has("按任务优先级计算"),"today tab native navigation");screenshot("03-today-65");
         desc("更多");desc("进度如何计算");check(has("专注计时不会自动改变任务进度"),"priority explanation is reachable from today");screenshot("28-weights");back();tab("今日");
         desc("更多");check(has("历史记录")&&has("导出记录")&&has("提醒设置"),"more menu only reached from today");screenshot("04-more");
-        desc("提醒设置");check(has("声音")&&has("振动"),"reminder settings available");screenshot("05-settings");back();desc("本地存储与备份");check(has("历史记录保存在本机"),"local backup explanation available");back();
+        desc("提醒设置");check(has("静音（仅通知）")&&has("仅响铃")&&has("仅震动")&&has("响铃和震动"),"four reminder settings available");screenshot("05-settings");back();desc("本地存储与备份");check(has("历史记录保存在本机"),"local backup explanation available");back();
         desc("历史记录");check(has("本地记录，不会自动过期"),"history list contains persisted day");screenshot("06-history");back();desc("导出记录");check(has("按日")&&has("按月")&&has("按年")&&has("自定义范围")&&has("全部记录"),"all five export scopes visible in native view tree");screenshot("07-export");
         click("预览导出");waitFor("保存文件",20000);check(has("Markdown 预览"),"Markdown export produces preview");screenshot("08-markdown-preview");click("复制内容");check(readClipboard().getItemAt(0).getText().toString().contains("Web3"),"complete Markdown copied to clipboard");back();
         click("○ PNG 图片");click("预览导出");waitFor("保存到相册",30000);check(has("PNG 预览"),"PNG export produces native image preview");screenshot("09-png-preview");
@@ -184,6 +186,47 @@ public final class LedgerInstrumentation extends Instrumentation {
         StoreV2Instrumentation.run(context,name->check(true,name));
         result.putString("stream",log+"\nOK ("+passed+" checks)\n");result.putInt("checks",passed);finish(Activity.RESULT_OK,result);
     }catch(Throwable error){result.putString("stream",log+"FAIL "+error+"\n"+android.util.Log.getStackTraceString(error));try{screenshot("99-failure");}catch(Throwable ignored){}finish(Activity.RESULT_CANCELED,result);}}
+    private void runReminders() throws Exception {
+        timer=TimerCoordinator.get(context);store=timer.store();
+        ReminderInstrumentationChecks.run(this,new ReminderInstrumentationChecks.Ui(){
+            @Override public void openSettings(){
+                screen=startActivitySync(new Intent(context,MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));idle();
+                tab("今日");desc("更多");desc("提醒设置");
+            }
+            @Override public void select(CompletionAlertMode mode){click(mode.label);}
+            @Override public void assertSelection(CompletionAlertMode mode,boolean enabled){
+                runOnMainSync(()->{
+                    RadioGroup group=findType(RadioGroup.class);check(group!=null&&group.getChildCount()==4,"exactly four mutually exclusive reminder radio choices");
+                    int checked=0;
+                    for(CompletionAlertMode option:CompletionAlertMode.values()){
+                        View view=findText(rootViews(),option.label);
+                        check(view instanceof RadioButton,"native RadioButton exists: "+option.label);
+                        RadioButton radio=(RadioButton)view;if(radio.isChecked())checked++;
+                        check(radio.isChecked()==(option==mode),"radio selection matches stored mode: "+option);
+                        android.text.Layout layout=radio.getLayout();
+                        boolean fits=layout!=null&&radio.getHeight()>=UiKit.dp(context,48);
+                        if(layout!=null)for(int line=0;line<layout.getLineCount();line++)
+                            fits&=layout.getEllipsisCount(line)==0&&layout.getLineWidth(line)<=radio.getWidth()-radio.getCompoundPaddingLeft()-radio.getCompoundPaddingRight()+1;
+                        check(fits,"native reminder label is untruncated with at least a 48dp tap target: "+option);
+                    }
+                    check(checked==1,"exactly one reminder mode is selected");
+                    Switch master=findType(Switch.class);
+                    check(master!=null&&master.isChecked()==enabled,"independent reminder master switch is preserved");
+                });
+            }
+            @Override public void toggleMaster(){desc("专注结束提醒");}
+            @Override public void recreate(){LedgerInstrumentation.this.recreate();}
+            @Override public void backAndReopen(){back();desc("提醒设置");}
+            @Override public void screenshot(String name)throws Exception{LedgerInstrumentation.this.screenshot(name);}
+            @Override public void background(){runOnMainSync(()->screen.moveTaskToBack(true));idle();}
+            @Override public void foreground(){
+                if(screen==null||screen.isFinishing()||screen.isDestroyed())screen=startActivitySync(new Intent(context,MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+                else context.startActivity(new Intent(context,MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK|Intent.FLAG_ACTIVITY_REORDER_TO_FRONT));
+                idle();
+            }
+            @Override public void close(){if(screen!=null&&!screen.isFinishing())runOnMainSync(screen::finish);idle();}
+        },name->check(true,name));
+    }
     private void prepareHiddenGalleryPreview(boolean verifyPrivacy)throws Exception {
         check(Build.VERSION.SDK_INT>=29,"gallery UI fixture runs on Android10 or newer");
         timer=TimerCoordinator.get(context);store=timer.store();

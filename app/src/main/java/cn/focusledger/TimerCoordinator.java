@@ -60,8 +60,10 @@ public final class TimerCoordinator {
         Session expired = refresh();
         if (!engine.isActive() || expired != null) return;
         TimerEngine.State before = engine.snapshot();
-        try { Session s = engine.pause(System.currentTimeMillis(),SystemClock.elapsedRealtime(),bootId()); persist(s); if(s != null) completeSideEffects(s); }
+        Session completed;
+        try { completed = engine.pause(System.currentTimeMillis(),SystemClock.elapsedRealtime(),bootId()); persist(completed); }
         catch (RuntimeException failure) { engine = new TimerEngine(before); throw failure; }
+        if(completed != null) { completeSideEffects(completed); return; }
         cancelAlarm();
         if(engine.isActive()) startService();
     }
@@ -69,8 +71,10 @@ public final class TimerCoordinator {
         refresh();
         if (!engine.isActive()) return;
         TimerEngine.State before = engine.snapshot();
-        try { Session s = engine.resume(System.currentTimeMillis(),SystemClock.elapsedRealtime(),bootId()); persist(s); if(s != null) completeSideEffects(s); }
+        Session completed;
+        try { completed = engine.resume(System.currentTimeMillis(),SystemClock.elapsedRealtime(),bootId()); persist(completed); }
         catch (RuntimeException failure) { engine = new TimerEngine(before); throw failure; }
+        if(completed != null) { completeSideEffects(completed); return; }
         schedule();
         if(engine.isActive()) startService();
     }
@@ -78,8 +82,10 @@ public final class TimerCoordinator {
         Session expired = refresh();
         if (!engine.isActive() || expired != null) return;
         TimerEngine.State before = engine.snapshot();
-        try { Session s = engine.finish(System.currentTimeMillis(),SystemClock.elapsedRealtime(),bootId(), "early_end"); persist(s); if(s != null && !"early_end".equals(s.reason)) completeSideEffects(s); }
+        Session completed;
+        try { completed = engine.finish(System.currentTimeMillis(),SystemClock.elapsedRealtime(),bootId(), "early_end"); persist(completed); }
         catch (RuntimeException failure) { engine = new TimerEngine(before); throw failure; }
+        if(completed != null && !"early_end".equals(completed.reason)) { completeSideEffects(completed); return; }
         cancelAlarm();
         context.stopService(new Intent(context,TimerService.class));
     }
@@ -98,13 +104,25 @@ public final class TimerCoordinator {
         long now = SystemClock.elapsedRealtime();
         if (now-lastCheckpointElapsed < 10000) return;
         TimerEngine.State before=engine.snapshot();
-        try { Session s=engine.checkpoint(System.currentTimeMillis(),now,bootId()); persist(s); if(s != null) completeSideEffects(s); }
+        Session completed;
+        try { completed=engine.checkpoint(System.currentTimeMillis(),now,bootId()); persist(completed); }
         catch (RuntimeException failure) { engine=new TimerEngine(before); throw failure; }
+        if(completed != null) completeSideEffects(completed);
     }
     private void completeSideEffects(Session session) {
-        cancelAlarm();
-        TimerService.notifyFinished(context,session);
-        context.stopService(new Intent(context,TimerService.class));
+        // Terminal state is already durable. System-side failures must never
+        // resurrect a finished timer or prevent stopping its live notification.
+        try { cancelAlarm(); }
+        catch(RuntimeException denied) { android.util.Log.w("FocusLedger","Completed alarm cleanup failed",denied); }
+        try { TimerService.notifyFinished(context,session); }
+        catch(RuntimeException denied) {
+            warning="本轮计时已保存，但结束提醒未能显示，请检查系统通知设置。";
+            android.util.Log.w("FocusLedger","Completion notification failed",denied);
+        }
+        finally {
+            try { context.stopService(new Intent(context,TimerService.class)); }
+            catch(RuntimeException denied) { android.util.Log.w("FocusLedger","Completed service cleanup failed",denied); }
+        }
     }
     public synchronized long actualMs() {
         return engine.isActive() ? engine.currentActualMs(System.currentTimeMillis(),SystemClock.elapsedRealtime(),bootId()) : 0;

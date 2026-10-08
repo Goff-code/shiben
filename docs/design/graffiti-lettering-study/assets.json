@@ -1,0 +1,38 @@
+[
+  {
+    "file": "grade_a_minus.png",
+    "sha256": "157882de1abfafca60197dd01c5c69b3ef0edf83ce5d6eae24b8ca81edef08c5",
+    "bytes": 928084,
+    "mode": "RGBA",
+    "width": 1254,
+    "height": 1254,
+    "alpha_minmax": [
+      0,
+      255
+    ]
+  },
+  {
+    "file": "grade_a_minus_v2.png",
+    "sha256": "95dd8dd49f59c60abc62138c4aa4171030e14889f7dabaa4fcd77cfd74a52238",
+    "bytes": 758777,
+    "mode": "RGBA",
+    "width": 1295,
+    "height": 1215,
+    "alpha_minmax": [
+      0,
+      255
+    ]
+  },
+  {
+    "file": "title_today.png",
+    "sha256": "2c386ed7bb8a1920b9c0ea1d4a49af71823838d78fe26dd095aa10be8b3fbcb7",
+    "bytes": 1507412,
+    "mode": "RGBA",
+    "width": 1536,
+    "height": 1024,
+    "alpha_minmax": [
+      0,
+      255
+    ]
+  }
+]

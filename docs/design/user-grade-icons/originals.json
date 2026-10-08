@@ -1,0 +1,267 @@
+{
+  "source_library_file_id": "libfile_491e575227948191b0a22f7eaeacdc21",
+  "source_zip_sha256": "552d065ff9d3ba43de1e06031af71cffc83fb91b74d1605da5696df5fc49fe96",
+  "original_png_bytes_preserved": true,
+  "files": [
+    {
+      "grade": "SSS+",
+      "file": "SSS-plus.png",
+      "width": 1536,
+      "height": 1024,
+      "sha256": "afbb67aa159c7c952dddc61fb7d0f41261b18fbf6c21d379cd87b716777cd92e",
+      "alpha_bbox": [
+        0,
+        37,
+        1518,
+        1000
+      ],
+      "core_bbox_alpha128": [
+        30,
+        81,
+        1506,
+        968
+      ],
+      "palette": "gold"
+    },
+    {
+      "grade": "SSS",
+      "file": "SSS.png",
+      "width": 1536,
+      "height": 1024,
+      "sha256": "de73c13fee15beb2fee2dd0c3578f9120d6b7f7fe6d8376849c01d7cc5f76daf",
+      "alpha_bbox": [
+        33,
+        23,
+        1490,
+        1024
+      ],
+      "core_bbox_alpha128": [
+        51,
+        99,
+        1480,
+        933
+      ],
+      "palette": "red"
+    },
+    {
+      "grade": "SS",
+      "file": "SS.png",
+      "width": 1536,
+      "height": 1024,
+      "sha256": "3f670eb01b2051c447f3ff48d6211d73a56c620613d9b880f02b90d6e11f8c4e",
+      "alpha_bbox": [
+        0,
+        9,
+        1522,
+        1024
+      ],
+      "core_bbox_alpha128": [
+        113,
+        86,
+        1453,
+        938
+      ],
+      "palette": "purple"
+    },
+    {
+      "grade": "S",
+      "file": "S.png",
+      "width": 1145,
+      "height": 1374,
+      "sha256": "2432bc7aad69e49ca4ec76cbb85ce432f71ec1ca9ba209c9512fe4392db396b6",
+      "alpha_bbox": [
+        0,
+        7,
+        1133,
+        1374
+      ],
+      "core_bbox_alpha128": [
+        32,
+        67,
+        1124,
+        1330
+      ],
+      "palette": "magenta"
+    },
+    {
+      "grade": "A+",
+      "file": "A-plus.png",
+      "width": 1536,
+      "height": 1024,
+      "sha256": "4c824bf7eeb601aefac483a8d78cb3da36b243626042339bcbf8a3d639f61604",
+      "alpha_bbox": [
+        37,
+        31,
+        1506,
+        1005
+      ],
+      "core_bbox_alpha128": [
+        130,
+        70,
+        1456,
+        967
+      ],
+      "palette": "cyan"
+    },
+    {
+      "grade": "A",
+      "file": "A.png",
+      "width": 1536,
+      "height": 1024,
+      "sha256": "074794fc096db2876e1c15b2d3a0a6561040426d3bccfb98c73805c0033a75d8",
+      "alpha_bbox": [
+        33,
+        23,
+        1500,
+        1024
+      ],
+      "core_bbox_alpha128": [
+        395,
+        52,
+        1181,
+        1000
+      ],
+      "palette": "green"
+    },
+    {
+      "grade": "A-",
+      "file": "A-minus.png",
+      "width": 1536,
+      "height": 1024,
+      "sha256": "0dbe63ab739f344283dd22347758b524f252957ff30a5fc5a71b9bfa7308fcf9",
+      "alpha_bbox": [
+        0,
+        17,
+        1535,
+        1024
+      ],
+      "core_bbox_alpha128": [
+        223,
+        41,
+        1390,
+        991
+      ],
+      "palette": "lime"
+    },
+    {
+      "grade": "B+",
+      "file": "B-plus.png",
+      "width": 1536,
+      "height": 1024,
+      "sha256": "0b12012a6ff4a5ef403788028356eb6cbf488ed94f9412b9ee4fb237fa963d92",
+      "alpha_bbox": [
+        0,
+        11,
+        1518,
+        1002
+      ],
+      "core_bbox_alpha128": [
+        133,
+        56,
+        1426,
+        989
+      ],
+      "palette": "yellow"
+    },
+    {
+      "grade": "B",
+      "file": "B.png",
+      "width": 1536,
+      "height": 1024,
+      "sha256": "ca079785fe7f8e9c66d7a858ff775a9b9f3d328de6f9b5f5bc270d56865fe5e1",
+      "alpha_bbox": [
+        0,
+        25,
+        1516,
+        1002
+      ],
+      "core_bbox_alpha128": [
+        323,
+        28,
+        1234,
+        993
+      ],
+      "palette": "orange"
+    },
+    {
+      "grade": "B-",
+      "file": "B-minus.png",
+      "width": 1536,
+      "height": 1024,
+      "sha256": "6044f42ba69ea37bc06ba7be6224e7f2c251e7db63b12044810a8d19abfda603",
+      "alpha_bbox": [
+        0,
+        22,
+        1508,
+        1024
+      ],
+      "core_bbox_alpha128": [
+        113,
+        31,
+        1436,
+        998
+      ],
+      "palette": "orange"
+    },
+    {
+      "grade": "C",
+      "file": "C.png",
+      "width": 1536,
+      "height": 1024,
+      "sha256": "0e57448e3c9b34f3455decb1f4840df794dcbd49b0817758d3950ff106b90a5d",
+      "alpha_bbox": [
+        0,
+        21,
+        1516,
+        1000
+      ],
+      "core_bbox_alpha128": [
+        327,
+        36,
+        1258,
+        982
+      ],
+      "palette": "gold-yellow"
+    },
+    {
+      "grade": "D",
+      "file": "D.png",
+      "width": 1536,
+      "height": 1024,
+      "sha256": "b125e8f1369bee655a12d215d237b0d072456e99a7e3bb00e25e421dcdd9ef2c",
+      "alpha_bbox": [
+        0,
+        9,
+        1512,
+        1024
+      ],
+      "core_bbox_alpha128": [
+        300,
+        74,
+        1323,
+        959
+      ],
+      "palette": "grey-white"
+    },
+    {
+      "grade": "E",
+      "file": "E.png",
+      "width": 1225,
+      "height": 1284,
+      "sha256": "9972a8da529949bbf10a86e2d2b8fff0f925049281e25c62770a664874a264a2",
+      "alpha_bbox": [
+        0,
+        27,
+        1209,
+        1284
+      ],
+      "core_bbox_alpha128": [
+        151,
+        92,
+        1191,
+        1251
+      ],
+      "palette": "grey-white"
+    }
+  ]
+}

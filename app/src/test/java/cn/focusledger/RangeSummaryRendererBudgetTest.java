@@ -10,7 +10,7 @@ public final class RangeSummaryRendererBudgetTest {
     @Test public void maximumImageIncludesBackgroundAndAuxiliaryAllocationsBelow48MiB() throws Exception {
         long bytes = RangeSummaryRenderer.estimatedBitmapBytes(RangeSummaryRenderer.WIDTH,
                 RangeSummaryRenderer.MAX_HEIGHT, RangeSummaryRenderer.MAX_BACKGROUND_PIXELS);
-        assertEquals(45_045_760L, bytes);
+        assertEquals(47_142_912L, bytes);
         assertTrue(bytes < RangeSummaryRenderer.BITMAP_BUDGET_BYTES);
         assertEquals(48L * 1024 * 1024, RangeSummaryRenderer.BITMAP_BUDGET_BYTES);
         assertEquals(8_640_000L, RangeSummaryRenderer.MAX_OUTPUT_PIXELS);
@@ -50,7 +50,7 @@ public final class RangeSummaryRendererBudgetTest {
         long actualBackground = 480L * 1021;
         assertTrue(actualBackground < RangeSummaryRenderer.MAX_BACKGROUND_PIXELS);
         RangeSummaryRenderer.validateBitmapBudget(1080, 8000, actualBackground);
-        assertEquals(34_560_000L + actualBackground * 4L + 8_388_608L,
+        assertEquals(34_560_000L + actualBackground * 4L + 8_388_608L + RangeSummaryRenderer.MAX_LETTERING_BYTES,
                 RangeSummaryRenderer.estimatedBitmapBytes(1080, 8000, actualBackground));
     }
 
@@ -59,7 +59,7 @@ public final class RangeSummaryRendererBudgetTest {
         assertEquals(1440, RangeSummaryRenderer.checkedHeight(1440, true));
         assertEquals(1730, RangeSummaryRenderer.checkedHeight(1440, false));
         long bytes = RangeSummaryRenderer.estimatedBitmapBytes(1080, 1440, RangeSummaryRenderer.MAX_BACKGROUND_PIXELS);
-        assertEquals(16_706_560L, bytes);
+        assertEquals(18_803_712L, bytes);
         assertTrue(bytes < RangeSummaryRenderer.BITMAP_BUDGET_BYTES);
     }
 }
