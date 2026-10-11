@@ -1,0 +1,17 @@
+{
+  "status": "static-review-only",
+  "base_commit": "519642fcd9ae5bab0e5a63ef532d22359999c2cd",
+  "checks": [
+    "Exact existing DEBUGGABLE/fingerprint/hardware/qemu guard preserved byte-for-byte",
+    "All existing preference/UI assertions preserved byte-for-byte",
+    "All existing timer checks and timeouts preserved byte-for-byte",
+    "All existing background checks and timeouts preserved byte-for-byte",
+    "Existing accelerated fixture, terminal/no-notification assertions, helpers and timeout values preserved byte-for-byte",
+    "Legacy appops denial/restoration body unchanged except indentation under API<33 else",
+    "Fresh effective-channel absence guard preserved",
+    "git apply --check passed against original 519642f working tree before parent applied proposal",
+    "This proposal worker ran no Gradle, Java compilation, APK build, adb, emulator operations, or repository write"
+  ],
+  "runtime_status": "not_run_by_proposal_worker",
+  "compilation_status": "not_run_by_proposal_worker"
+}

@@ -1,0 +1,20 @@
+// Test APK only. Apply to BOTH pinned source checkouts; never change main source,
+// applicationId, versionCode, signingConfig, or production manifests here.
+gradle.beforeProject { project ->
+    project.plugins.withId('com.android.application') {
+        def fixtureProperty = project.findProperty('actionsUpgradeFixtures')
+        if (fixtureProperty == null) {
+            throw new GradleException('Pass -PactionsUpgradeFixtures=/absolute/path/to/tests/actions-upgrade')
+        }
+        def fixtures = new File(fixtureProperty.toString())
+        if (!fixtures.isAbsolute() || !new File(fixtures, 'java/cn/focusledger/ActionsUpgradeInstrumentation.java').isFile()) {
+            throw new GradleException('actionsUpgradeFixtures must identify the existing absolute fixture directory')
+        }
+        // The application build.gradle sets its normal runner after applying the
+        // plugin. Finalize the test overlay only once that DSL has been read.
+        project.androidComponents.finalizeDsl { android ->
+            android.defaultConfig.testInstrumentationRunner = 'cn.focusledger.ActionsUpgradeInstrumentation'
+            android.sourceSets.androidTest.java.setSrcDirs([new File(fixtures, 'java')])
+        }
+    }
+}

@@ -1,0 +1,61 @@
+{
+  "status": "static checks passed; native build and runtime not run",
+  "checks": [
+    "Reflective production renderer body is byte-identical",
+    "Settlement fixture mapping is byte-identical",
+    "Preview assertion block is moved verbatim except shared options declaration",
+    "Per-grade assertion block is unchanged except extraction of identical SHA-256 expression",
+    "Extracted output-hash helper has the original hashing behavior",
+    "All shared, extreme, and privacy statements are unchanged",
+    "All unrelated runner suites and timeouts are byte-identical",
+    "GraffitiInstrumentationChecks.java baseline matches production pin exactly",
+    "LedgerInstrumentation.java baseline matches production pin exactly",
+    "Grade groups cover thirteen production specs exactly once, 4/3/3/3",
+    "No-argument full run selects all thirteen original grades",
+    "Final common batch checks combined retained hashes before all-thirteen assertion",
+    "Overlay generator passes Python syntax check without execution",
+    "Unified diff applies cleanly in read-only git apply --check",
+    "Source repository remains clean",
+    "Static assertion counts match expected loop structure",
+    "Unchanged delegated hidden-preview helper has three assertions"
+  ],
+  "groups": {
+    "1": [
+      "SSS+",
+      "SSS",
+      "SS",
+      "S"
+    ],
+    "2": [
+      "A+",
+      "A",
+      "A-"
+    ],
+    "3": [
+      "B+",
+      "B",
+      "B-"
+    ],
+    "4": [
+      "C",
+      "D",
+      "E"
+    ]
+  },
+  "expected_check_counts": {
+    "full_or_0": 95,
+    "1": 25,
+    "2": 19,
+    "3": 19,
+    "4": 19,
+    "5": 56
+  },
+  "file_sha256": {
+    "README.md": "03c26d73fc12e1cefacee49e08b138a66e1a71753bfa79574a5d5f891540c83a",
+    "graffiti-batches.init.gradle": "c5b0fabbfc92586f442a0f96b9ae4d0dcc7a0c77830670faa2c5f86388b6e9da",
+    "java/cn/focusledger/GraffitiInstrumentationChecks.java": "3351e6ce42626bc172d49ff686ce132b68eaeb96941b5b6770e93e49f94b2da1",
+    "java/cn/focusledger/LedgerInstrumentation.java": "9cc0e570e9e74df4cd13e5765d30b492a2c5625625618976d58ae85c4252f31a",
+    "native-graffiti-batches.patch": "838e626c0bad3fc896065b5787aadcf8b99385003690b31553fa05f462c5ebe9",
+    "prepare-overlay.py": "73dd04ff6efa91a8adeafcee9bd061965e13f1f52992e5cf3896880992ffe33a"
+  }
+}

@@ -1,0 +1,32 @@
+// Test Java only. Never use this init script for the old202/upgrade fixture builds.
+gradle.beforeProject { project ->
+    if (project.path == ':app') {
+        project.plugins.withId('com.android.application') {
+            if (project.findProperty('actionsUpgradeFixtures') != null) {
+                throw new GradleException('Graffiti batches must not be combined with upgrade fixtures')
+            }
+            def value = project.findProperty('graffitiBatchOverlay')
+            if (value == null) {
+                throw new GradleException('Pass -PgraffitiBatchOverlay=/absolute/path/to/prepared-overlay')
+            }
+            def overlay = new File(value.toString())
+            def manifest = new File(overlay, 'overlay.json')
+            if (!overlay.isAbsolute() || !manifest.isFile()) {
+                throw new GradleException('Prepare an absolute overlay directory with prepare-overlay.py first')
+            }
+            def metadata = new groovy.json.JsonSlurper().parse(manifest)
+            if (metadata.production_commit != 'b1838a8fb66b74b13c278991d097b9be48155688') {
+                throw new GradleException('Unexpected production commit in graffiti overlay')
+            }
+            project.androidComponents.finalizeDsl { android ->
+                if (android.defaultConfig.applicationId != 'cn.goff.shiben' ||
+                        android.defaultConfig.versionCode != 7 ||
+                        android.defaultConfig.testInstrumentationRunner != 'cn.focusledger.LedgerInstrumentation') {
+                    throw new GradleException('Graffiti overlay requires the current production app and normal runner')
+                }
+                // Keep main, assets, resources, manifests, IDs, versions, signing, and runner untouched.
+                android.sourceSets.androidTest.java.setSrcDirs([new File(overlay, 'java')])
+            }
+        }
+    }
+}
