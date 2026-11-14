@@ -195,7 +195,7 @@ public final class StoreV2Instrumentation extends Instrumentation {
         try (LedgerStore store = new LedgerStore(context)) {
             LedgerStore.DaySnapshot old = store.getDaySnapshot(oldDay);
             LedgerStore.DayTask row = find(old,"old-task");
-            check(store.getReadableDatabase().getVersion() == 3, "real SQLiteOpenHelper upgrades V1 through V2 to V3");
+            check(store.getReadableDatabase().getVersion() == 4, "real SQLiteOpenHelper upgrades V1 through V2 to V4");
             check(!old.completeSnapshot && Double.isNaN(old.totalProgress), "legacy daily completeness and weighted total remain unknown");
             check(row.title.equals("Checklist-era name") && row.progress == -1 && row.rank == -1 && Double.isNaN(row.weight)
                     && Boolean.TRUE.equals(row.legacyDone), "legacy checklist name and binary check survive without inventing percentage or rank");

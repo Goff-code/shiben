@@ -36,7 +36,7 @@ import java.util.concurrent.CancellationException;
 /** All app data stays in this app-private SQLite database. */
 public final class LedgerStore extends SQLiteOpenHelper {
     private static final String DATABASE_NAME = "focus-ledger.db";
-    private static final int DATABASE_VERSION = 3;
+    private static final int DATABASE_VERSION = 4;
     private final Context appContext;
 
     public static final class Project {
@@ -319,6 +319,7 @@ public final class LedgerStore extends SQLiteOpenHelper {
                 + "record BLOB NOT NULL)");
         createV2Schema(db);
         createV3Schema(db);
+        SyncData.create(db);
     }
 
     @Override public void onUpgrade(SQLiteDatabase db, int oldVersion, int newVersion) {
@@ -340,6 +341,7 @@ public final class LedgerStore extends SQLiteOpenHelper {
             }
         }
         if (oldVersion < 3 && newVersion >= 3) createV3Schema(db);
+        if (oldVersion < 4 && newVersion >= 4) SyncData.create(db);
     }
 
     /** Additive upgrade: existing headers, task snapshots, sessions and timer blobs remain intact. */
@@ -1024,7 +1026,7 @@ public final class LedgerStore extends SQLiteOpenHelper {
         }
     }
 
-    private void notifyArchive() { DailyArchive.schedule(appContext); }
+    private void notifyArchive() { DailyArchive.schedule(appContext); SyncEngine.request(appContext); }
 
 
     /**

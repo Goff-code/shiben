@@ -346,15 +346,15 @@ public final class GalleryInstrumentationChecks {
         try {
             Set<String> forbidden = new HashSet<>(Arrays.asList("android.permission.READ_EXTERNAL_STORAGE", "android.permission.WRITE_EXTERNAL_STORAGE",
                     "android.permission.READ_MEDIA_IMAGES", "android.permission.READ_MEDIA_VIDEO", "android.permission.READ_MEDIA_VISUAL_USER_SELECTED",
-                    "android.permission.MANAGE_EXTERNAL_STORAGE", "android.permission.INTERNET"));
+                    "android.permission.MANAGE_EXTERNAL_STORAGE"));
             PackageInfo info = context.getPackageManager().getPackageInfo(context.getPackageName(), PackageManager.GET_PERMISSIONS);
             for (String permission : forbidden) check(info.requestedPermissions == null || !Arrays.asList(info.requestedPermissions).contains(permission),
                     "gallery flow adds no permission: " + permission, report);
             Set<String> priorPermissions = new HashSet<>(Arrays.asList("android.permission.POST_NOTIFICATIONS", "android.permission.VIBRATE",
                     "android.permission.FOREGROUND_SERVICE", "android.permission.FOREGROUND_SERVICE_SPECIAL_USE",
-                    "android.permission.SCHEDULE_EXACT_ALARM", "android.permission.RECEIVE_BOOT_COMPLETED"));
+                    "android.permission.SCHEDULE_EXACT_ALARM", "android.permission.RECEIVE_BOOT_COMPLETED", "android.permission.INTERNET", "android.permission.ACCESS_NETWORK_STATE"));
             check(info.requestedPermissions != null && priorPermissions.equals(new HashSet<>(Arrays.asList(info.requestedPermissions))),
-                    "installed app retains exactly its pre-gallery permission set", report);
+                    "installed app retains its declared gallery and opt-in sync permission set", report);
 
             LocalDate day = LocalDate.of(2026, 10, 1);
             ExportWorker.Result single = render(context, V2Reports.DateRange.day(day), Collections.singletonList(snapshot(day, 1)), root);

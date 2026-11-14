@@ -176,7 +176,7 @@ final class AttentionV202Instrumentation {
         }
         try(LedgerStore store=new LedgerStore(isolated)) {
             SQLiteDatabase db=store.getReadableDatabase();
-            check(db.getVersion()==3,"real Android SQLite applies v2 to v3 schema upgrade");
+            check(db.getVersion()==4,"real Android SQLite applies v2 to v4 schema upgrade");
             try(Cursor rows=db.rawQuery("SELECT record,deleted FROM sessions ORDER BY id",null)) {
                 check(rows.getCount()==2,"v2 upgrade retains live session and deletion tombstone rows");
                 rows.moveToFirst();check(Arrays.equals(rows.getBlob(0),sessionBytes)&&rows.getInt(1)==0,
