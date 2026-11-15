@@ -41,6 +41,8 @@ public final class MainActivity extends Activity {
     private AlertDialog activeDialog; private String dialogKind,dialogTask; private int dialogValue;
     private Bundle restoreDialog;
     private TextView attentionTotal,attentionBreakdown,detailSummary,detailTotal;
+    private Button taskSyncButton;
+    private TextView taskSyncStatus;
     private String lastAttentionState;
     private long observedSyncVersion, lastSyncRequest;
     private final Map<String,TextView> detailTaskTimes=new HashMap<>();
@@ -59,6 +61,7 @@ public final class MainActivity extends Activity {
             else if(!Objects.equals(renderedSession,id)||renderedPaused!=s.paused){if(tab==0&&page.isEmpty())render();}
             if(System.currentTimeMillis()-lastSyncRequest>30000){lastSyncRequest=System.currentTimeMillis();SyncEngine.request(MainActivity.this);}
             if(observedSyncVersion!=SyncEngine.appliedVersion&&page.isEmpty()&&activeDialog==null){observedSyncVersion=SyncEngine.appliedVersion;render();}
+            updateTaskSyncControls();
             updateTimer();if(backupStatus!=null)backupStatus.setText(DailyArchive.get(MainActivity.this).getBackupStatus());
         }catch(RuntimeException e){if(status!=null)status.setText("记录暂时无法读取，请重试");}
         handler.postDelayed(this,1000);
@@ -79,6 +82,8 @@ public final class MainActivity extends Activity {
     private android.content.SharedPreferences prefs(){return getSharedPreferences("shiben-v2-ui",MODE_PRIVATE);}
     private LocalDate date(String s){try{return LocalDate.parse(s);}catch(Exception e){return LocalDate.now();}}
     private void render(){if(root==null)return;captureDraft();root.removeAllViews();clock=null;elapsed=null;status=null;ring=null;editorName=null;editorProgress=null;editorRank=null;exportStatus=null;exportProgress=null;saveStatus=null;backupStatus=null;attentionTotal=null;attentionBreakdown=null;detailSummary=null;detailTotal=null;detailTaskTimes.clear();lastAttentionState=null;
+        taskSyncButton = null;
+        taskSyncStatus = null;
         int nextBackdrop=tab==0?R.drawable.focus_backdrop:tab==1?R.drawable.tasks_backdrop:R.drawable.today_backdrop;if(backdropResource!=nextBackdrop){pageBackdrop.setImageResource(nextBackdrop);backdropResource=nextBackdrop;}content=new FrameLayout(this);root.addView(content,new LinearLayout.LayoutParams(-1,0,1));
         body=column();body.setPadding(dp(this,22),dp(this,16),dp(this,22),dp(this,20));
         if(tab==0&&page.isEmpty()){scroll=null;content.addView(body,new FrameLayout.LayoutParams(-1,-1));renderFocus();}
@@ -141,7 +146,82 @@ public final class MainActivity extends Activity {
     private void chooseMinutes(){LinearLayout box=column();box.setPadding(dp(this,24),dp(this,8),dp(this,24),dp(this,8));NumberPicker picker=new NumberPicker(this);picker.setMinValue(3);picker.setMaxValue(288);picker.setValue(minutes/5);picker.setFormatter(v->(v*5)+" 分钟");picker.setWrapSelectorWheel(false);box.addView(picker);TextView hint=label("最少 15 分钟，每次增加 5 分钟",13,MUTED,false);box.addView(hint);new AlertDialog.Builder(this,R.style.ShibenDialog).setTitle("专注时长").setView(box).setPositiveButton("确定",(d,w)->{picker.clearFocus();minutes=picker.getValue()*5;render();}).setNegativeButton("取消",null).show();}
     private void finishDialog(){new AlertDialog.Builder(this,R.style.ShibenDialog).setTitle("结束本次专注？").setMessage("已专注 "+shortDuration(timer.actualMs())+"\n结束后保留本次记录，任务进度不变。").setNegativeButton("继续专注",null).setPositiveButton("结束并保存",(d,w)->run(()->{timer.finish();DailyArchive.schedule(this);render();})).show();}
 
-    private void renderTasks(){LinearLayout header=header("当天任务",false);header.addView(iconButton("plus","新增任务",()->openEditor(null)));header.addView(iconButton("sort","调整优先级",()->{reorderIds=new ArrayList<>();for(LedgerStore.Task t:store.getTasks(today))reorderIds.add(t.id);reordered=false;page="reorder";render();}));gap(body,6);body.addView(label("把大目标，拆解成今天的行动。",13,MUTED,false));gap(body,22);LedgerStore.DaySnapshot day=store.getDaySnapshot(today);List<LedgerStore.Task> tasks=store.getTasks(today);if(tasks.isEmpty()){empty("还没有任务","任务与项目使用同一列表",()->openEditor(null),"添加任务");return;}for(LedgerStore.Task t:tasks){View row=taskRow(t.title,progress(t.id,day),()->progressDialog(t.id,-1));row.setOnLongClickListener(v->{openEditor(t.id);return true;});row.setContentDescription(t.title+"，进度 "+(progress(t.id,day)<0?"未知":progress(t.id,day)+"%")+"，点击调整进度，长按编辑任务");body.addView(row);gap(body,10);}gap(body,18);TextView help=label("点击调整进度 · 长按编辑任务",12,MUTED,false);help.setGravity(Gravity.CENTER);help.setPadding(dp(this,8),dp(this,8),dp(this,8),dp(this,8));help.setBackground(shape(0xEFFFFFFF,0,10,this));body.addView(help);gap(body,8);TextView daily=label("每日进度从 0% 开始，任务列表会保留",12,MUTED,false);daily.setGravity(Gravity.CENTER);daily.setPadding(dp(this,8),dp(this,8),dp(this,8),dp(this,8));daily.setBackground(shape(0xEFFFFFFF,0,10,this));body.addView(daily);}
+    private void renderTasks() {
+        LinearLayout header = header("当天任务", false);
+        header.addView(iconButton("plus", "新增任务", () -> openEditor(null)));
+        header.addView(iconButton("sort", "调整优先级", () -> {
+            reorderIds = new ArrayList<>();
+            for (LedgerStore.Task task : store.getTasks(today)) reorderIds.add(task.id);
+            reordered = false;
+            page = "reorder";
+            render();
+        }));
+        gap(body, 6);
+        body.addView(label("把大目标，拆解成今天的行动。", 13, MUTED, false));
+        gap(body, 12);
+        renderTaskSyncControls();
+        gap(body, 18);
+
+        LedgerStore.DaySnapshot day = store.getDaySnapshot(today);
+        List<LedgerStore.Task> tasks = store.getTasks(today);
+        if (tasks.isEmpty()) {
+            empty("还没有任务", "任务与项目使用同一列表", () -> openEditor(null), "添加任务");
+            return;
+        }
+        for (LedgerStore.Task task : tasks) {
+            int value = progress(task.id, day);
+            View row = taskRow(task.title, value, () -> progressDialog(task.id, -1));
+            row.setOnLongClickListener(view -> { openEditor(task.id); return true; });
+            row.setContentDescription(task.title + "，进度 " + (value < 0 ? "未知" : value + "%")
+                    + "，点击调整进度，长按编辑任务");
+            body.addView(row);
+            gap(body, 10);
+        }
+        gap(body, 18);
+        TextView help = label("点击调整进度 · 长按编辑任务", 12, MUTED, false);
+        help.setGravity(Gravity.CENTER);
+        help.setPadding(dp(this, 8), dp(this, 8), dp(this, 8), dp(this, 8));
+        help.setBackground(shape(0xEFFFFFFF, 0, 10, this));
+        body.addView(help);
+        gap(body, 8);
+        TextView daily = label("每日进度从 0% 开始，任务列表会保留", 12, MUTED, false);
+        daily.setGravity(Gravity.CENTER);
+        daily.setPadding(dp(this, 8), dp(this, 8), dp(this, 8), dp(this, 8));
+        daily.setBackground(shape(0xEFFFFFFF, 0, 10, this));
+        body.addView(daily);
+    }
+
+    private void renderTaskSyncControls() {
+        LinearLayout controls = row();
+        controls.setGravity(Gravity.CENTER_VERTICAL);
+        taskSyncButton = button("立即同步", false, () -> {
+            if (!SyncIdentity.connected(this)) {
+                toast("请先在「更多 → AI 连接」连接 ChatGPT");
+                return;
+            }
+            SyncEngine.request(this);
+            updateTaskSyncControls();
+        });
+        controls.addView(taskSyncButton, new LinearLayout.LayoutParams(-2, -2));
+
+        taskSyncStatus = label("", 13, INK, false);
+        taskSyncStatus.setAccessibilityLiveRegion(View.ACCESSIBILITY_LIVE_REGION_POLITE);
+        LinearLayout.LayoutParams statusLayout = new LinearLayout.LayoutParams(0, -2, 1);
+        statusLayout.setMarginStart(dp(this, 12));
+        controls.addView(taskSyncStatus, statusLayout);
+        body.addView(controls, new LinearLayout.LayoutParams(-1, -2));
+        updateTaskSyncControls();
+    }
+
+    private void updateTaskSyncControls() {
+        if (taskSyncButton == null) return;
+        boolean connected = SyncIdentity.connected(this);
+        boolean syncing = connected && SyncEngine.requestPending();
+        String status = syncing ? "正在同步…" : SyncIdentity.status(this);
+        if (!TextUtils.equals(taskSyncStatus.getText(), status)) taskSyncStatus.setText(status);
+        taskSyncButton.setEnabled(!syncing);
+        taskSyncButton.setAlpha(syncing ? 0.6f : 1f);
+    }
     private int progress(String id,LedgerStore.DaySnapshot day){for(LedgerStore.DayTask t:day.items)if(t.taskId.equals(id))return t.progress;return 0;}
     private View taskRow(String title,int value,Runnable action){LinearLayout r=row();r.setGravity(Gravity.CENTER_VERTICAL);r.setMinimumHeight(dp(this,76));r.setPadding(dp(this,12),dp(this,12),dp(this,12),dp(this,12));r.setBackground(shape(0xEFFFFFFF,0x44DDE5E1,17,this));r.addView(new UiKit.TaskBadge(this,title),new LinearLayout.LayoutParams(dp(this,40),dp(this,40)));LinearLayout details=column();LinearLayout.LayoutParams detailParams=new LinearLayout.LayoutParams(0,-2,1);detailParams.setMargins(dp(this,12),0,dp(this,12),0);TextView name=label(title,16,INK,true);name.setMaxLines(2);name.setEllipsize(TextUtils.TruncateAt.END);details.addView(name);gap(details,6);details.addView(new UiKit.Bar(this,value),new LinearLayout.LayoutParams(-1,dp(this,12)));r.addView(details,detailParams);TextView percent=label(value<0?"未知":value+"%",14,INK,false);percent.setGravity(Gravity.END);percent.setSingleLine(true);int percentWidth=dp(this,44f*Math.max(1f,getResources().getConfiguration().fontScale));r.addView(percent,new LinearLayout.LayoutParams(percentWidth,-2));if(action!=null){r.setFocusable(true);r.setOnClickListener(v->action.run());}return r;}
     private void progressDialog(String id,int restored){LedgerStore.Task task=store.getTask(id);if(task==null||task.archived)return;int old=progress(id,store.getDaySnapshot(today));dialogKind="progress";dialogTask=id;dialogValue=restored>=0?restored:Math.max(0,old);LinearLayout box=column();box.setPadding(dp(this,24),dp(this,12),dp(this,24),dp(this,12));TextView title=label(task.title,19,INK,false);title.setGravity(Gravity.CENTER);box.addView(title);TextView number=label(dialogValue+"%",48,INK,false);number.setGravity(Gravity.CENTER);box.addView(number);SeekBar seek=new SeekBar(this);seek.setMax(100);seek.setProgress(dialogValue);seek.setContentDescription("任务进度，0 至 100 百分比");box.addView(seek,new LinearLayout.LayoutParams(-1,dp(this,56)));LinearLayout ends=row();ends.addView(label("0%",14,MUTED,false),new LinearLayout.LayoutParams(0,-2,1));ends.addView(label("100%",14,MUTED,false));box.addView(ends);seek.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener(){public void onProgressChanged(SeekBar b,int v,boolean user){dialogValue=v;number.setText(v+"%");}public void onStartTrackingTouch(SeekBar b){}public void onStopTrackingTouch(SeekBar b){}});AlertDialog dlg=new AlertDialog.Builder(this,R.style.ShibenDialog).setTitle("调整任务进度").setView(box).setNegativeButton("取消",null).setPositiveButton("保存进度",null).create();activeDialog=dlg;dlg.setOnShowListener(d->dlg.getButton(-1).setOnClickListener(v->{try{int current=progress(id,store.getDaySnapshot(today));store.setTaskProgress(id,seek.getProgress());DailyArchive.schedule(this);dlg.dismiss();render();if(current>=0&&current<100&&seek.getProgress()==100)celebrate(task.title);}catch(RuntimeException e){toast(e.getMessage());}}));dlg.setOnDismissListener(d->{if(activeDialog==dlg){activeDialog=null;dialogKind=null;}});dlg.show();}

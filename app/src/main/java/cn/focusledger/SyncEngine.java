@@ -23,6 +23,9 @@ final class SyncEngine {
         schedule(app);
         if(queued.compareAndSet(false,true))executor.execute(()->{try{sync(app);}catch(Exception e){SyncIdentity.status(app,"同步未完成，将自动重试："+safe(e));}finally{queued.set(false);}});
     }
+    static boolean requestPending() {
+        return queued.get();
+    }
     static String safe(Exception e){return e instanceof SecurityException?"连接授权已失效，请重新连接":e instanceof IOException?"网络暂时不可用":e instanceof JSONException?"服务响应无效":"同步失败，请稍后重试";}
     static void schedule(Context c){JobScheduler js=(JobScheduler)c.getSystemService(Context.JOB_SCHEDULER_SERVICE);if(js.getPendingJob(JOB)==null)js.schedule(new JobInfo.Builder(JOB,new ComponentName(c,SyncJob.class)).setRequiredNetworkType(JobInfo.NETWORK_TYPE_ANY).setPeriodic(15*60*1000L).setPersisted(true).setBackoffCriteria(30000,JobInfo.BACKOFF_POLICY_EXPONENTIAL).build());}
     static void runJob(Context c,Runnable done){executor.execute(()->{try{if(SyncIdentity.connected(c))sync(c);}catch(Exception e){SyncIdentity.status(c,"等待重试："+safe(e));}finally{done.run();}});}
