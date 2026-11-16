@@ -199,7 +199,7 @@ public final class MainActivity extends Activity {
                 toast("请先在「更多 → AI 连接」连接 ChatGPT");
                 return;
             }
-            SyncEngine.request(this);
+            SyncEngine.requestNow(this);
             updateTaskSyncControls();
         });
         controls.addView(taskSyncButton, new LinearLayout.LayoutParams(-2, -2));

@@ -41,6 +41,9 @@ final class SyncData {
                 else {
                     String type=command.getString("type");
                     if(type.equals("create_task")){LedgerStore.Task t=store.saveSimpleTask(command.getString("title"),0,store.getTasks(LocalDate.now()).size()+1);result.put("taskId",t.id);}
+                    else if (type.equals("delete_tasks")) {
+                        status = archiveConfirmedTasks(store, command.getJSONArray("tasks"), result);
+                    }
                     else {
                         String tid=command.getString("task_id");LedgerStore.Task t=store.getTask(tid);
                         if(t==null||t.archived||!hash(task(t,store.getDaySnapshot(LocalDate.now())).toString()).equals(command.getString("expected_revision")))status="conflict";
@@ -52,5 +55,31 @@ final class SyncData {
                 result.put("status",status);db.execSQL("INSERT INTO sync_receipts(id,payload,result) VALUES(?,?,?)",new Object[]{id,payload,result.toString()});db.setTransactionSuccessful();
             }finally{db.endTransaction();}return result;
         }
+    }
+
+    // The caller owns the transaction, including the receipt. Check every target
+    // against the same snapshot before archiving changes any task's priority.
+    private static String archiveConfirmedTasks(LedgerStore store, JSONArray targets, JSONObject result)
+            throws Exception {
+        if (targets.length() == 0 || targets.length() > 50) throw new IllegalArgumentException("任务数量无效");
+        Set<String> ids = new LinkedHashSet<>();
+        LedgerStore.DaySnapshot snapshot = store.getDaySnapshot(LocalDate.now());
+        cn.focusledger.core.TimerEngine.State timer = store.loadTimer();
+        for (int i = 0; i < targets.length(); i++) {
+            JSONObject target = targets.getJSONObject(i);
+            String id = target.getString("task_id");
+            LedgerStore.Task current = store.getTask(id);
+            if (current == null || current.archived || !ids.add(id)
+                    || !hash(task(current, snapshot).toString()).equals(target.getString("expected_revision"))) {
+                return "conflict";
+            }
+            if (timer != null && timer.sessionId != null && id.equals(timer.taskId)) {
+                result.put("reason", "任务正在计时或暂停，请先结束计时");
+                return "conflict";
+            }
+        }
+        for (String id : ids) store.archiveTask(id);
+        result.put("taskIds", new JSONArray(ids));
+        return "applied";
     }
 }

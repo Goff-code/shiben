@@ -43,6 +43,30 @@ public class SyncDataTest {
   JSONObject edit=new JSONObject().put("id",UUID.randomUUID().toString()).put("type","update_task").put("day",LocalDate.now().toString()).put("task_id",second).put("expected_revision",revision).put("title","改名").put("rank",1);
   assertEquals("applied",SyncData.apply(store,edit).getString("status"));assertEquals("改名",store.getTask(second).title);assertEquals(0,store.getTask(second).sort);assertEquals(1,store.getTask(first).sort);
  }
+ @Test public void batchDeletionChecksAllRevisionsBeforeReorderingAndRetries()throws Exception{
+  String first=SyncData.apply(store,create("甲")).getString("taskId");
+  String second=SyncData.apply(store,create("乙")).getString("taskId");
+  String remaining=SyncData.apply(store,create("丙")).getString("taskId");
+  LedgerStore.DaySnapshot day=store.getDaySnapshot(LocalDate.now());
+  String revision=SyncData.hash(SyncData.task(store.getTask(second),day).toString());
+  JSONObject secondTarget=new JSONObject().put("task_id",second).put("expected_revision","0".repeat(64));
+  org.json.JSONArray targets=new org.json.JSONArray()
+   .put(new JSONObject().put("task_id",first).put("expected_revision",SyncData.hash(SyncData.task(store.getTask(first),day).toString())))
+   .put(secondTarget);
+  JSONObject command=new JSONObject().put("id",UUID.randomUUID().toString())
+   .put("type","delete_tasks").put("day",LocalDate.now().toString()).put("tasks",targets);
+  assertEquals("conflict",SyncData.apply(store,command).getString("status"));
+  assertEquals(3,store.getTasks(LocalDate.now()).size());
+  secondTarget.put("expected_revision",revision);
+  command.put("id",UUID.randomUUID().toString());
+  JSONObject receipt=SyncData.apply(store,command);
+  assertEquals("applied",receipt.getString("status"));
+  assertEquals(receipt.toString(),SyncData.apply(store,command).toString());
+  assertTrue(store.getTask(first).archived);
+  assertTrue(store.getTask(second).archived);
+  assertEquals(remaining,store.getTasks(LocalDate.now()).get(0).id);
+  assertEquals(0,store.getTask(remaining).sort);
+ }
  @Test public void v3UpgradePreservesTasksAndProgress()throws Exception{
   LedgerStore.Task task=store.saveSimpleTask("旧记录",42,1);SQLiteDatabase db=store.getWritableDatabase();
   java.util.List<String> triggers=new java.util.ArrayList<>();try(Cursor c=db.rawQuery("SELECT name FROM sqlite_master WHERE type='trigger' AND name LIKE 'sync_%'",null)){while(c.moveToNext())triggers.add(c.getString(0));}for(String name:triggers)db.execSQL("DROP TRIGGER "+name);

@@ -16,6 +16,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 final class SyncEngine {
     private static final ExecutorService executor=Executors.newSingleThreadExecutor();
     private static final AtomicBoolean queued=new AtomicBoolean();
+    private static final AtomicBoolean manualQueued = new AtomicBoolean();
     static final int JOB=31081;
     static volatile long appliedVersion;
     static void request(Context context){
@@ -24,7 +25,21 @@ final class SyncEngine {
         if(queued.compareAndSet(false,true))executor.execute(()->{try{sync(app);}catch(Exception e){SyncIdentity.status(app,"同步未完成，将自动重试："+safe(e));}finally{queued.set(false);}});
     }
     static boolean requestPending() {
-        return queued.get();
+        return queued.get() || manualQueued.get();
+    }
+
+    static void requestNow(Context context) {
+        Context app = context.getApplicationContext();
+        if (!SyncIdentity.connected(app) || !manualQueued.compareAndSet(false, true)) return;
+        executor.execute(() -> {
+            try {
+                sync(app, true);
+            } catch (Exception e) {
+                SyncIdentity.status(app, "同步未完成：" + safe(e));
+            } finally {
+                manualQueued.set(false);
+            }
+        });
     }
     static String safe(Exception e){return e instanceof SecurityException?"连接授权已失效，请重新连接":e instanceof IOException?"网络暂时不可用":e instanceof JSONException?"服务响应无效":"同步失败，请稍后重试";}
     static void schedule(Context c){JobScheduler js=(JobScheduler)c.getSystemService(Context.JOB_SCHEDULER_SERVICE);if(js.getPendingJob(JOB)==null)js.schedule(new JobInfo.Builder(JOB,new ComponentName(c,SyncJob.class)).setRequiredNetworkType(JobInfo.NETWORK_TYPE_ANY).setPeriodic(15*60*1000L).setPersisted(true).setBackoffCriteria(30000,JobInfo.BACKOFF_POLICY_EXPONENTIAL).build());}
@@ -40,9 +55,13 @@ final class SyncEngine {
     }
     private static JSONObject row(String kind,String id,JSONObject payload)throws Exception{String text=payload.toString();return new JSONObject().put("kind",kind).put("id",id).put("payload",text).put("hash",SyncData.hash(text));}
     static void sync(Context c)throws Exception{
+        sync(c, false);
+    }
+
+    private static void sync(Context c, boolean manual)throws Exception{
         if(!SyncIdentity.connected(c))return;
         SyncIdentity.status(c,"正在同步…");upload(c);
-        JSONArray commands=post(c,new JSONObject().put("action","poll")).getJSONArray("commands");
+        JSONArray commands=post(c,new JSONObject().put("action","poll").put("manual",manual)).getJSONArray("commands");
         LedgerStore store=TimerCoordinator.get(c).store();
         for(int i=0;i<commands.length();i++){
             if(!SyncIdentity.connected(c))return;
@@ -67,7 +86,7 @@ final class SyncEngine {
                 db.setTransactionSuccessful();
             }finally{db.endTransaction();}
         }}
-        post(c,new JSONObject().put("action","begin").put("sequence",sequence).put("day",today.toString()).put("zone",zone));
+        post(c,new JSONObject().put("action","begin").put("sequence",sequence).put("day",today.toString()).put("zone",zone).put("taskDeletion",true));
         JSONArray batch=new JSONArray();int size=0;
         for(JSONObject row:rows){String key=row.getString("kind")+":"+row.getString("id"),hash=row.getString("hash");boolean unchanged;
             synchronized(store){try(Cursor cur=store.getReadableDatabase().rawQuery("SELECT hash FROM sync_hashes WHERE key=?",new String[]{key})){unchanged=cur.moveToFirst()&&hash.equals(cur.getString(0));}}
